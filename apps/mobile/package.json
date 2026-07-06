@@ -1,0 +1,39 @@
+{
+  "name": "@kidz/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "build": "expo export --platform web",
+    "dev": "expo start",
+    "start": "expo start",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@expo-google-fonts/manrope": "^0.4.2",
+    "@expo-google-fonts/unbounded": "^0.4.1",
+    "@kidz/contracts": "workspace:*",
+    "@kidz/domain": "workspace:*",
+    "@tanstack/react-query": "^5.101.2",
+    "expo": "~57.0.2",
+    "expo-font": "~57.0.0",
+    "expo-image-picker": "~57.0.2",
+    "expo-linear-gradient": "~57.0.0",
+    "expo-router": "~57.0.3",
+    "expo-status-bar": "~57.0.0",
+    "lucide-react-native": "^1.23.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "~0.21.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,22 @@
+FROM node:24-alpine AS build
+RUN corepack enable
+WORKDIR /app
+
+ARG EXPO_PUBLIC_API_URL
+ENV EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/domain/package.json packages/domain/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY packages packages
+COPY apps/mobile apps/mobile
+RUN pnpm --filter @kidz/mobile... build
+
+FROM nginx:1.29-alpine AS runtime
+COPY infra/nginx-mobile.conf /etc/nginx/templates/default.conf.template
+COPY --from=build /app/apps/mobile/dist /usr/share/nginx/html
+ENV PORT=8080
+EXPOSE 8080

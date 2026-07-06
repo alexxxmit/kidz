@@ -1,0 +1,15 @@
+FROM node:24-alpine AS build
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY apps/jobs-worker/package.json apps/jobs-worker/package.json
+RUN pnpm install --frozen-lockfile
+COPY apps/jobs-worker apps/jobs-worker
+RUN pnpm --filter @kidz/jobs-worker build
+
+FROM node:24-alpine AS runtime
+RUN corepack enable
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app /app
+CMD ["node", "apps/jobs-worker/dist/main.js"]

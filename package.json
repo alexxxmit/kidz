@@ -1,0 +1,23 @@
+{
+  "name": "kidz",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "format": "prettier --write .",
+    "check": "pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "prettier": "^3.6.2",
+    "turbo": "^2.10.3",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

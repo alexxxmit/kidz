@@ -1,0 +1,25 @@
+{
+  "name": "@kidz/admin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start -p ${PORT:-3001}",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@kidz/domain": "workspace:*",
+    "next": "16.2.10",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "@types/react": "~19.2.2",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

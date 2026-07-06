@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Kidz",
+    "slug": "kidz",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "kidz",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Kidz использует выбранное фото только для добавления вещи в ваш гардероб.",
+          "cameraPermission": "Kidz использует камеру только для фотографирования одежды.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.kidz.mobile"
+    },
+    "android": {
+      "package": "app.kidz.mobile"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

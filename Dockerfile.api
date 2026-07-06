@@ -1,0 +1,19 @@
+FROM node:24-alpine AS build
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/domain/package.json packages/domain/package.json
+COPY apps/api/package.json apps/api/package.json
+RUN pnpm install --frozen-lockfile
+COPY packages packages
+COPY apps/api apps/api
+RUN pnpm --filter @kidz/api... build
+
+FROM node:24-alpine AS runtime
+RUN corepack enable
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app /app
+EXPOSE 3000
+CMD ["sh", "-c", "node apps/api/dist/database/migrate.js && node apps/api/dist/main.js"]
