@@ -6,6 +6,12 @@ export const profiles = pgTable("profiles", {
   locale: varchar("locale", { length: 5 }).notNull(),
   ageYears: integer("age_years").notNull(),
   autonomyMode: varchar("autonomy_mode", { length: 24 }).notNull(),
+  genderPresentation: varchar("gender_presentation", { length: 24 }).notNull().default("NOT_SPECIFIED"),
+  hairProfile: jsonb("hair_profile").notNull().default({
+    length: "MEDIUM",
+    color: "DARK_BROWN",
+    openToColorAdvice: true,
+  }),
   styleMix: jsonb("style_mix").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -24,6 +30,8 @@ export const wardrobeItems = pgTable("wardrobe_items", {
   careState: varchar("care_state", { length: 24 }).notNull(),
   fitState: varchar("fit_state", { length: 24 }).notNull(),
   imageUri: varchar("image_uri", { length: 1024 }),
+  cutoutUri: varchar("cutout_uri", { length: 1024 }),
+  imageProcessingState: varchar("image_processing_state", { length: 24 }).notNull().default("NONE"),
   wearCount: integer("wear_count").default(0).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

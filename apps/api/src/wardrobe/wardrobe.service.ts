@@ -25,6 +25,8 @@ export class WardrobeService {
         careState: input.careState,
         fitState: input.fitState,
         imageUri: input.imageUri,
+        cutoutUri: input.cutoutUri,
+        imageProcessingState: input.imageProcessingState ?? "NONE",
       })
       .returning();
     if (!row) throw new Error("Wardrobe item insert did not return a row");
@@ -53,6 +55,8 @@ export class WardrobeService {
       careState: row.careState as WardrobeItem["careState"],
       fitState: row.fitState as WardrobeItem["fitState"],
       ...(row.imageUri ? { imageUri: row.imageUri } : {}),
+      ...(row.cutoutUri ? { cutoutUri: row.cutoutUri } : {}),
+      imageProcessingState: row.imageProcessingState as WardrobeItem["imageProcessingState"],
       wearCount: row.wearCount,
       createdAt: row.createdAt.toISOString(),
     };

@@ -67,6 +67,7 @@ child_profiles
 
 - id, household_id, nickname, birth_month, birth_year;
 - comfort_offset, current_clothing_size, current_shoe_size;
+- gender_presentation, hair_profile_json для total look-рекомендаций;
 - нет full date of birth, school, address, face photo;
 - optional sex/growth reference появляется только после отдельной legal/product оценки.
 
@@ -82,9 +83,11 @@ wardrobe_items
 
 - id, household_id, child_id, display_name;
 - category, subcategory, body_slot;
+- total look slots включают footwear, headwear, jewelry, bag и generic accessory;
 - warmth, breathability, rain_protection, wind_protection;
 - formality, mobility, easy_on, care_burden;
 - colors_json, pattern, material_family, activity_tags;
+- image_uri, cutout_uri, image_processing_state;
 - size_system, size_value, brand_id nullable;
 - lifecycle_state, care_state, fit_state;
 - purchase_price_minor/currency/date optional;
@@ -141,6 +144,7 @@ outfit_options
 
 - recommendation_id, rank, total_score;
 - score_components_json, reason_codes, warnings;
+- hair_suggestion_json, makeup_suggestion_json и styling_suggestions_json;
 - is_partial, missing_requirements_json.
 
 outfit_option_items

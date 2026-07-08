@@ -16,11 +16,55 @@ export const StyleMixEntrySchema = z.object({
 });
 export type StyleMixEntry = z.infer<typeof StyleMixEntrySchema>;
 
+export const GenderPresentationSchema = z.enum([
+  "FEMININE",
+  "MASCULINE",
+  "NEUTRAL",
+  "NOT_SPECIFIED",
+]);
+export type GenderPresentation = z.infer<typeof GenderPresentationSchema>;
+
+export const HairLengthSchema = z.enum([
+  "BUZZ",
+  "SHORT",
+  "MEDIUM",
+  "LONG",
+  "VERY_LONG",
+]);
+export type HairLength = z.infer<typeof HairLengthSchema>;
+
+export const HairColorSchema = z.enum([
+  "BLACK",
+  "DARK_BROWN",
+  "BROWN",
+  "LIGHT_BROWN",
+  "BLONDE",
+  "RED",
+  "GRAY",
+  "DYED_BRIGHT",
+  "MIXED",
+  "OTHER",
+]);
+export type HairColor = z.infer<typeof HairColorSchema>;
+
+export const HairProfileSchema = z.object({
+  length: HairLengthSchema.default("MEDIUM"),
+  color: HairColorSchema.default("DARK_BROWN"),
+  openToColorAdvice: z.boolean().default(true),
+});
+export type HairProfile = z.infer<typeof HairProfileSchema>;
+
 export const ProfileInputSchema = z.object({
   displayName: z.string().trim().min(1).max(40).default("Мой профиль"),
   locale: LocaleSchema,
   ageYears: z.number().int().min(0).max(18),
   autonomyMode: AutonomyModeSchema,
+  genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
+  hairProfile: HairProfileSchema.default({
+    length: "MEDIUM",
+    color: "DARK_BROWN",
+    openToColorAdvice: true,
+  }),
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
 });
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
@@ -33,6 +77,9 @@ export const GarmentSlotSchema = z.enum([
   "mid_layer",
   "outerwear",
   "footwear",
+  "headwear",
+  "jewelry",
+  "bag",
   "accessory",
 ]);
 export type GarmentSlot = z.infer<typeof GarmentSlotSchema>;
@@ -53,6 +100,21 @@ export const GarmentCategorySchema = z.enum([
   "boots",
   "shoes",
   "hat",
+  "cap",
+  "beanie",
+  "headband",
+  "hair_accessory",
+  "scarf",
+  "belt",
+  "necklace",
+  "bracelet",
+  "ring",
+  "earrings",
+  "watch",
+  "bag",
+  "backpack",
+  "crossbody_bag",
+  "tote",
   "accessory",
 ]);
 export type GarmentCategory = z.infer<typeof GarmentCategorySchema>;
@@ -68,6 +130,10 @@ export const WardrobeItemInputSchema = z.object({
   careState: z.enum(["CLEAN", "WORN_REUSABLE", "LAUNDRY"]).default("CLEAN"),
   fitState: z.enum(["FITS", "UNKNOWN", "TOO_BIG", "OUTGROWN"]).default("FITS"),
   imageUri: z.string().optional(),
+  cutoutUri: z.string().optional(),
+  imageProcessingState: z
+    .enum(["NONE", "PENDING_CUTOUT", "CUTOUT_READY", "CUTOUT_FAILED"])
+    .optional(),
 });
 export type WardrobeItemInput = z.infer<typeof WardrobeItemInputSchema>;
 export type WardrobeItem = WardrobeItemInput & {
@@ -98,6 +164,30 @@ export type ScoreBreakdown = {
   weather: number;
   completeness: number;
   rotation: number;
+  styling: number;
+};
+
+export type HairSuggestion = {
+  title: string;
+  detail: string;
+  colorAdvice?: string;
+  colorFit: "already_fits" | "optional_shift" | "not_applicable";
+  reasonCodes: string[];
+};
+
+export type StylingSuggestion = {
+  slot: GarmentSlot | "hair";
+  title: string;
+  detail: string;
+  reasonCode: string;
+};
+
+export type MakeupSuggestion = {
+  title: string;
+  detail: string;
+  intensity: "none" | "light" | "medium" | "bold";
+  agePolicy: "not_suggested" | "optional" | "style_reference";
+  reasonCodes: string[];
 };
 
 export type OutfitOption = {
@@ -107,6 +197,9 @@ export type OutfitOption = {
   scores: ScoreBreakdown;
   reasonCodes: string[];
   missingSlots: GarmentSlot[];
+  hair: HairSuggestion;
+  makeup: MakeupSuggestion;
+  stylingSuggestions: StylingSuggestion[];
 };
 
 export type StyleDefinition = {

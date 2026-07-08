@@ -5,6 +5,8 @@ import type {
   WardrobeItemInput,
 } from "@kidz/contracts";
 
+import { buildStylingGuidance } from "./styling.js";
+
 type CandidateItem = Omit<WardrobeItemInput, "profileId"> & { id?: string };
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -41,6 +43,18 @@ const completenessScore = (items: CandidateItem[]): { score: number; missing: Ga
   return { score: clamp(1 - missing.length / 3), missing };
 };
 
+const itemStyleScore = (
+  item: CandidateItem,
+  styleMix: OutfitRequest["profile"]["styleMix"],
+): number => {
+  const totalWeight = styleMix.reduce((sum, style) => sum + style.weight, 0) || 1;
+  const score = styleMix.reduce(
+    (sum, style) => sum + (item.styleIds.includes(style.styleId) ? style.weight : 0),
+    0,
+  );
+  return clamp(score / totalWeight);
+};
+
 const weatherScore = (
   items: CandidateItem[],
   request: OutfitRequest,
@@ -60,22 +74,45 @@ const weatherScore = (
   return { score, reasons };
 };
 
-const combinations = (wardrobe: CandidateItem[]): CandidateItem[][] => {
+const combinations = (
+  wardrobe: CandidateItem[],
+  styleMix: OutfitRequest["profile"]["styleMix"],
+): CandidateItem[][] => {
   const available = wardrobe.filter(
     (item) => item.careState !== "LAUNDRY" && item.fitState !== "OUTGROWN",
   );
-  const tops = available.filter((item) => item.slot === "top");
-  const bottoms = available.filter((item) => item.slot === "bottom");
-  const onePieces = available.filter((item) => item.slot === "one_piece");
-  const shoes = available.filter((item) => item.slot === "footwear");
+  const ranked = (items: CandidateItem[], limit: number) =>
+    [...items]
+      .sort((a, b) => itemStyleScore(b, styleMix) - itemStyleScore(a, styleMix))
+      .slice(0, limit);
+  const tops = ranked(available.filter((item) => item.slot === "top"), 7);
+  const bottoms = ranked(available.filter((item) => item.slot === "bottom"), 7);
+  const onePieces = ranked(available.filter((item) => item.slot === "one_piece"), 4);
+  const shoes = ranked(available.filter((item) => item.slot === "footwear"), 5);
   const mids: Array<CandidateItem | undefined> = [
     undefined,
-    ...available.filter((item) => item.slot === "mid_layer"),
+    ...ranked(available.filter((item) => item.slot === "mid_layer"), 4),
   ];
   const outers: Array<CandidateItem | undefined> = [
     undefined,
-    ...available.filter((item) => item.slot === "outerwear"),
+    ...ranked(available.filter((item) => item.slot === "outerwear"), 4),
   ];
+  const optionalBySlot = (slot: GarmentSlot): Array<CandidateItem | undefined> => [
+    undefined,
+    ...available
+      .filter((item) => item.slot === slot)
+      .sort((a, b) => itemStyleScore(b, styleMix) - itemStyleScore(a, styleMix))
+      .slice(0, 2),
+  ];
+  const headwear = optionalBySlot("headwear");
+  const jewelry = [
+    undefined,
+    ...available
+      .filter((item) => item.slot === "jewelry" || item.slot === "accessory")
+      .sort((a, b) => itemStyleScore(b, styleMix) - itemStyleScore(a, styleMix))
+      .slice(0, 2),
+  ];
+  const bags = optionalBySlot("bag");
   const bodies: CandidateItem[][] = [
     ...tops.flatMap((top) => bottoms.map((bottom) => [top, bottom])),
     ...onePieces.map((item) => [item]),
@@ -86,7 +123,15 @@ const combinations = (wardrobe: CandidateItem[]): CandidateItem[][] => {
     for (const shoe of shoes.length ? shoes : [undefined]) {
       for (const mid of mids) {
         for (const outer of outers) {
-          result.push([...body, shoe, mid, outer].filter(Boolean) as CandidateItem[]);
+          for (const hat of headwear) {
+            for (const jewel of jewelry) {
+              for (const bag of bags) {
+                result.push(
+                  [...body, shoe, mid, outer, hat, jewel, bag].filter(Boolean) as CandidateItem[],
+                );
+              }
+            }
+          }
         }
       }
     }
@@ -101,17 +146,27 @@ const optionSignature = (items: CandidateItem[]) =>
     .join("|");
 
 export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
-  const candidates = combinations(request.wardrobe).map((items, index) => {
+  const candidates = combinations(request.wardrobe, request.profile.styleMix).map((items, index) => {
     const style = weightedStyleScore(items, request.profile.styleMix);
     const weather = weatherScore(items, request);
     const completeness = completenessScore(items);
+    const styling = buildStylingGuidance(request.profile, items);
     const rotation = clamp(
       1 - items.reduce((sum, item) => sum + ("wearCount" in item ? Number(item.wearCount) : 0), 0) / 20,
     );
     const score =
-      style * 0.36 + weather.score * 0.29 + completeness.score * 0.25 + rotation * 0.1;
+      style * 0.31 +
+      weather.score * 0.27 +
+      completeness.score * 0.23 +
+      styling.stylingScore * 0.11 +
+      rotation * 0.08;
     const reasonCodes = [
       style >= 0.5 ? "STYLE_MATCH" : "STYLE_EXPLORATION",
+      "HAIR_DIRECTION",
+      "MAKEUP_DIRECTION",
+      items.some((item) => item.slot === "jewelry" || item.slot === "bag" || item.slot === "accessory")
+        ? "ACCESSORY_BALANCE"
+        : "ACCESSORY_IDEA",
       ...weather.reasons,
       completeness.missing.length ? "PARTIAL_WARDROBE" : "COMPLETE_LOOK",
     ];
@@ -124,9 +179,13 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
         weather: Number(weather.score.toFixed(3)),
         completeness: Number(completeness.score.toFixed(3)),
         rotation: Number(rotation.toFixed(3)),
+        styling: styling.stylingScore,
       },
       reasonCodes,
       missingSlots: completeness.missing,
+      hair: styling.hair,
+      makeup: styling.makeup,
+      stylingSuggestions: styling.stylingSuggestions,
       signature: optionSignature(items),
     } satisfies OutfitOption & { signature: string };
   });

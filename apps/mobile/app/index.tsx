@@ -1,4 +1,13 @@
-import type { AutonomyMode, Locale, OutfitOption, StyleDefinition, WardrobeItemInput } from "@kidz/contracts";
+import type {
+  AutonomyMode,
+  GenderPresentation,
+  HairColor,
+  HairLength,
+  Locale,
+  OutfitOption,
+  StyleDefinition,
+  WardrobeItemInput,
+} from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import * as ImagePicker from "expo-image-picker";
 import { Camera, Check, ChevronLeft, Minus, Plus, Search, Shirt, Sparkles, Trash2 } from "lucide-react-native";
@@ -30,6 +39,9 @@ type LocalItem = Omit<WardrobeItemInput, "profileId"> & { localId: string };
 
 const steps: Step[] = ["language", "profile", "styles", "wardrobe", "outfits"];
 const weather = { temperatureC: 8, feelsLikeC: 6, rainProbability: 0.3, windKph: 28, occasion: "school" as const };
+const genderOptions: GenderPresentation[] = ["FEMININE", "MASCULINE", "NEUTRAL", "NOT_SPECIFIED"];
+const hairLengthOptions: HairLength[] = ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"];
+const hairColorOptions: HairColor[] = ["BLACK", "DARK_BROWN", "BROWN", "LIGHT_BROWN", "BLONDE", "DYED_BRIGHT"];
 
 const autonomyForAge = (age: number): AutonomyMode => {
   if (age <= 5) return "PARENT_DECIDES";
@@ -39,10 +51,67 @@ const autonomyForAge = (age: number): AutonomyMode => {
 
 const reasonLabel = (locale: Locale, code: string) => {
   if (code === "STYLE_MATCH") return t(locale, "styleMatch");
+  if (code === "HAIR_DIRECTION") return t(locale, "hairDirection");
+  if (code === "MAKEUP_DIRECTION") return t(locale, "makeupDirection");
+  if (code === "ACCESSORY_BALANCE") return t(locale, "accessoryBalance");
+  if (code === "ACCESSORY_IDEA") return t(locale, "accessoryIdea");
   if (code === "COOL_WEATHER_LAYER") return t(locale, "coolLayer");
   if (code === "COMPLETE_LOOK") return t(locale, "completeLook");
   if (code === "PARTIAL_WARDROBE") return t(locale, "partial");
   return code.replaceAll("_", " ").toLowerCase();
+};
+
+const itemArtworkUri = (item: Pick<WardrobeItemInput, "cutoutUri" | "imageUri">) =>
+  item.cutoutUri ?? item.imageUri;
+
+const genderLabel = (locale: Locale, value: GenderPresentation) => {
+  const labels: Record<GenderPresentation, Record<Locale, string>> = {
+    FEMININE: { ru: "Женский", en: "Feminine" },
+    MASCULINE: { ru: "Мужской", en: "Masculine" },
+    NEUTRAL: { ru: "Нейтрально", en: "Neutral" },
+    NOT_SPECIFIED: { ru: "Не указывать", en: "Skip" },
+  };
+  return labels[value][locale];
+};
+
+const hairLengthLabel = (locale: Locale, value: HairLength) => {
+  const labels: Record<HairLength, Record<Locale, string>> = {
+    BUZZ: { ru: "Очень короткие", en: "Buzz" },
+    SHORT: { ru: "Короткие", en: "Short" },
+    MEDIUM: { ru: "Средние", en: "Medium" },
+    LONG: { ru: "Длинные", en: "Long" },
+    VERY_LONG: { ru: "Очень длинные", en: "Very long" },
+  };
+  return labels[value][locale];
+};
+
+const hairColorLabel = (locale: Locale, value: HairColor) => {
+  const labels: Record<HairColor, Record<Locale, string>> = {
+    BLACK: { ru: "Чёрные", en: "Black" },
+    DARK_BROWN: { ru: "Тёмный шатен", en: "Dark brown" },
+    BROWN: { ru: "Шатен", en: "Brown" },
+    LIGHT_BROWN: { ru: "Русые", en: "Light brown" },
+    BLONDE: { ru: "Блонд", en: "Blonde" },
+    RED: { ru: "Рыжие", en: "Red" },
+    GRAY: { ru: "Пепельные", en: "Ash/gray" },
+    DYED_BRIGHT: { ru: "Яркий цвет", en: "Bright color" },
+    MIXED: { ru: "Смешанный", en: "Mixed" },
+    OTHER: { ru: "Другой", en: "Other" },
+  };
+  return labels[value][locale];
+};
+
+const slotLabel = (locale: Locale, slot: keyof typeof quickItems) => {
+  const labels: Record<keyof typeof quickItems, Record<Locale, string>> = {
+    top: { ru: "верх", en: "top" },
+    bottom: { ru: "низ", en: "bottom" },
+    footwear: { ru: "обувь", en: "shoes" },
+    outerwear: { ru: "куртка", en: "outerwear" },
+    jewelry: { ru: "украшение", en: "jewelry" },
+    bag: { ru: "сумка", en: "bag" },
+    headwear: { ru: "головной убор", en: "headwear" },
+  };
+  return labels[slot][locale];
 };
 
 export default function HomeScreen() {
@@ -53,6 +122,9 @@ export default function HomeScreen() {
   const [locale, setLocale] = useState<Locale>("ru");
   const [age, setAge] = useState(13);
   const [autonomy, setAutonomy] = useState<AutonomyMode>("USER_DECIDES");
+  const [genderPresentation, setGenderPresentation] = useState<GenderPresentation>("NOT_SPECIFIED");
+  const [hairLength, setHairLength] = useState<HairLength>("MEDIUM");
+  const [hairColor, setHairColor] = useState<HairColor>("BLACK");
   const [selectedStyleIds, setSelectedStyleIds] = useState(["stockholm", "emo"]);
   const [search, setSearch] = useState("");
   const [wardrobe, setWardrobe] = useState<LocalItem[]>([]);
@@ -135,6 +207,7 @@ export default function HomeScreen() {
         name: locale === "ru" ? "Вещь с фото" : "Photo item",
         styleIds: selectedStyleIds,
         imageUri: asset.uri,
+        imageProcessingState: "PENDING_CUTOUT",
         localId: `photo-${Date.now()}`,
       },
     ]);
@@ -147,6 +220,12 @@ export default function HomeScreen() {
       locale,
       ageYears: age,
       autonomyMode: autonomy,
+      genderPresentation,
+      hairProfile: {
+        length: hairLength,
+        color: hairColor,
+        openToColorAdvice: true,
+      },
       styleMix: selectedStyleIds.map((styleId) => ({ styleId, weight: 1 / selectedStyleIds.length })),
     };
     const items = wardrobe.map(({ localId: _localId, ...item }) => item);
@@ -220,6 +299,49 @@ export default function HomeScreen() {
               </Pressable>
             ))}
           </View>
+          <View style={styles.totalLookPanel}>
+            <Text style={styles.fieldLabel}>{t(locale, "appearanceTitle")}</Text>
+            <Text style={styles.totalLookIntro}>{t(locale, "appearanceBody")}</Text>
+
+            <Text style={styles.smallSectionLabel}>{t(locale, "genderPresentation")}</Text>
+            <View style={styles.chipGrid}>
+              {genderOptions.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => setGenderPresentation(option)}
+                  style={[styles.segmentChip, genderPresentation === option && styles.segmentChipSelected]}
+                >
+                  <Text style={[styles.segmentChipText, genderPresentation === option && styles.segmentChipTextSelected]}>{genderLabel(locale, option)}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.smallSectionLabel}>{t(locale, "hairLength")}</Text>
+            <View style={styles.chipGrid}>
+              {hairLengthOptions.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => setHairLength(option)}
+                  style={[styles.segmentChip, hairLength === option && styles.segmentChipSelected]}
+                >
+                  <Text style={[styles.segmentChipText, hairLength === option && styles.segmentChipTextSelected]}>{hairLengthLabel(locale, option)}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.smallSectionLabel}>{t(locale, "hairColor")}</Text>
+            <View style={styles.chipGrid}>
+              {hairColorOptions.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => setHairColor(option)}
+                  style={[styles.colorChip, hairColor === option && styles.segmentChipSelected]}
+                >
+                  <Text style={[styles.segmentChipText, hairColor === option && styles.segmentChipTextSelected]}>{hairColorLabel(locale, option)}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
           <PrimaryButton label={t(locale, "next")} onPress={goNext} />
         </View>
       )}
@@ -261,16 +383,16 @@ export default function HomeScreen() {
           </View>
           <Text style={[styles.fieldLabel, { marginTop: 22, marginBottom: 9 }]}>{t(locale, "quickAdd")}</Text>
           <View style={styles.quickRow}>
-            {(["top", "bottom", "footwear", "outerwear"] as const).map((slot) => (
-              <Pressable key={slot} onPress={() => addQuickItem(slot)} style={styles.quickChip}><Plus size={14} color={colors.graphite} /><Text style={styles.quickText}>{slot}</Text></Pressable>
+            {(["top", "bottom", "footwear", "outerwear", "jewelry", "bag", "headwear"] as const).map((slot) => (
+              <Pressable key={slot} onPress={() => addQuickItem(slot)} style={styles.quickChip}><Plus size={14} color={colors.graphite} /><Text style={styles.quickText}>{slotLabel(locale, slot)}</Text></Pressable>
             ))}
           </View>
           <View style={styles.wardrobeList}>
             {!wardrobe.length && <View style={styles.emptyState}><Shirt size={28} color="#9AA0AA" /><Text style={styles.emptyText}>{t(locale, "wardrobeEmpty")}</Text></View>}
             {wardrobe.map((item) => (
               <View key={item.localId} style={styles.garmentRow}>
-                {item.imageUri ? <Image source={{ uri: item.imageUri }} style={styles.garmentImage} /> : <View style={[styles.garmentSwatch, { backgroundColor: item.colors[0] ?? colors.powder }]}><Shirt size={19} color={colors.paper} /></View>}
-                <View style={{ flex: 1 }}><Text style={styles.garmentName}>{item.name}</Text><Text style={styles.garmentMeta}>{item.slot} · warmth {item.warmth}/4</Text></View>
+                {itemArtworkUri(item) ? <Image source={{ uri: itemArtworkUri(item)! }} style={styles.garmentImage} /> : <View style={[styles.garmentSwatch, { backgroundColor: item.colors[0] ?? colors.powder }]}><Shirt size={19} color={colors.paper} /></View>}
+                <View style={{ flex: 1 }}><Text style={styles.garmentName}>{item.name}</Text><Text style={styles.garmentMeta}>{item.slot} · warmth {item.warmth}/4{item.imageProcessingState === "PENDING_CUTOUT" ? ` · ${t(locale, "cutoutPending")}` : ""}</Text></View>
                 <Pressable onPress={() => setWardrobe((current) => current.filter((currentItem) => currentItem.localId !== item.localId))} hitSlop={10}><Trash2 size={18} color="#9A5B57" /></Pressable>
               </View>
             ))}
@@ -294,12 +416,37 @@ export default function HomeScreen() {
                   <View style={styles.flatLay}>
                     {option.items.map((item, itemIndex) => (
                       <View key={`${item.name}-${itemIndex}`} style={[styles.flatLayItem, { transform: [{ rotate: `${(itemIndex % 2 ? 1 : -1) * (2 + itemIndex)}deg` }] }]}>
-                        <View style={[styles.itemColor, { backgroundColor: item.colors[0] ?? colors.powder }]} />
+                        {itemArtworkUri(item) ? (
+                          <View style={styles.itemImageFrame}>
+                            <Image source={{ uri: itemArtworkUri(item)! }} style={styles.itemImage} />
+                          </View>
+                        ) : (
+                          <View style={[styles.itemColor, { backgroundColor: item.colors[0] ?? colors.powder }]} />
+                        )}
                         <Text numberOfLines={2} style={styles.flatLayName}>{item.name}</Text>
                       </View>
                     ))}
                   </View>
-                  <View style={styles.reasonList}>{option.reasonCodes.slice(0, 3).map((reason) => <View key={reason} style={styles.reasonRow}><View style={styles.reasonBullet} /><Text style={styles.reasonText}>{reasonLabel(locale, reason)}</Text></View>)}</View>
+                  <View style={styles.stylingPanel}>
+                    <Text style={styles.stylingTitle}>{option.hair.title}</Text>
+                    <Text style={styles.stylingBody}>{option.hair.detail}</Text>
+                    {option.hair.colorAdvice && <Text style={styles.colorAdvice}>{option.hair.colorAdvice}</Text>}
+                    {option.makeup && (
+                      <>
+                        <Text style={[styles.stylingTitle, { marginTop: 4 }]}>{option.makeup.title}</Text>
+                        <Text style={styles.stylingBody}>{option.makeup.detail}</Text>
+                      </>
+                    )}
+                    <View style={styles.stylingSuggestionGrid}>
+                      {option.stylingSuggestions.slice(0, 3).map((suggestion) => (
+                        <View key={`${option.id}-${suggestion.reasonCode}`} style={styles.stylingSuggestion}>
+                          <Text style={styles.stylingSuggestionTitle}>{suggestion.title}</Text>
+                          <Text style={styles.stylingSuggestionBody}>{suggestion.detail}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                  <View style={styles.reasonList}>{option.reasonCodes.slice(0, 4).map((reason) => <View key={reason} style={styles.reasonRow}><View style={styles.reasonBullet} /><Text style={styles.reasonText}>{reasonLabel(locale, reason)}</Text></View>)}</View>
                   <Pressable style={styles.chooseButton}><Text style={styles.chooseText}>{t(locale, "choose")}</Text><ArrowIcon /></Pressable>
                 </View>
               ))}
@@ -370,6 +517,15 @@ const styles = StyleSheet.create({
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.ultraviolet },
   choiceTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 15 },
   choiceBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 12.5, lineHeight: 19, marginTop: 3 },
+  totalLookPanel: { backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 18, marginBottom: 24 },
+  totalLookIntro: { color: colors.secondary, fontFamily: typography.body, fontSize: 12.5, lineHeight: 19, marginTop: 7, marginBottom: 14 },
+  smallSectionLabel: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 12, marginTop: 13, marginBottom: 8 },
+  chipGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  segmentChip: { borderWidth: 1, borderColor: colors.line, backgroundColor: "#F7F8FA", paddingHorizontal: 11, paddingVertical: 8 },
+  colorChip: { borderWidth: 1, borderColor: colors.line, backgroundColor: "#F7F8FA", paddingHorizontal: 10, paddingVertical: 8 },
+  segmentChipSelected: { borderColor: colors.ultraviolet, backgroundColor: "#F0EFFF" },
+  segmentChipText: { color: colors.secondary, fontFamily: typography.bodyMedium, fontSize: 11.5 },
+  segmentChipTextSelected: { color: colors.graphite, fontFamily: typography.bodySemibold },
   mixPanel: { borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, marginBottom: 12 },
   mixContent: { padding: 18 },
   mixText: { color: colors.graphite, fontFamily: typography.displaySoft, fontSize: 20, marginTop: 5 },
@@ -412,7 +568,17 @@ const styles = StyleSheet.create({
   flatLay: { minHeight: 190, flexDirection: "row", flexWrap: "wrap", alignContent: "center", justifyContent: "center", gap: 8, paddingVertical: 20 },
   flatLayItem: { width: "30%", minWidth: 88, maxWidth: 150, minHeight: 76, backgroundColor: "#F7F8FA", borderWidth: 1, borderColor: "#E5E7EC", padding: 7, justifyContent: "space-between" },
   itemColor: { height: 34, marginBottom: 6 },
+  itemImageFrame: { height: 54, marginBottom: 6, backgroundColor: "#EEF0F4", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  itemImage: { width: "100%", height: "100%", resizeMode: "contain" },
   flatLayName: { color: colors.graphite, fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 13 },
+  stylingPanel: { borderTopWidth: 1, borderTopColor: "#E8EAF0", paddingTop: 13, gap: 8 },
+  stylingTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 13 },
+  stylingBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 11.5, lineHeight: 17 },
+  colorAdvice: { color: colors.graphite, fontFamily: typography.bodyMedium, fontSize: 11.5, lineHeight: 17, backgroundColor: "#F0EFFF", padding: 10 },
+  stylingSuggestionGrid: { gap: 7, marginTop: 2 },
+  stylingSuggestion: { backgroundColor: "#F7F8FA", borderWidth: 1, borderColor: "#E5E7EC", padding: 10 },
+  stylingSuggestionTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 11.5 },
+  stylingSuggestionBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 10.8, lineHeight: 15, marginTop: 3 },
   reasonList: { borderTopWidth: 1, borderTopColor: "#E8EAF0", paddingTop: 12, gap: 7 },
   reasonRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   reasonBullet: { width: 5, height: 5, backgroundColor: colors.ultraviolet },

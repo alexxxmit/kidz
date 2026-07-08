@@ -54,6 +54,7 @@ UNKNOWN → TOO_BIG → FITS → GETTING_SMALL → OUTGROWN
 
 - category и subcategory;
 - body slot: base_top, top, bottom, one_piece, mid_layer, outerwear, footwear, headwear, hands, accessory;
+- styling slot: jewelry, bag и hair guidance; hair guidance не является вещью гардероба, но возвращается в OutfitOption;
 - warmth 0–4;
 - breathability 0–4;
 - rain protection 0–4;
@@ -118,6 +119,8 @@ Hard filters:
 
 Используется constraint-aware beam search, а не полный перебор. На каждом добавленном slot сохраняются только лучшие N частичных комбинаций, прошедшие hard constraints.
 
+После core outfit добавляется optional styling layer: jewelry/accessory, bag, headwear, hair direction и makeup direction. Эти элементы повышают релевантность образа, но не делают комплект невалидным, если отсутствуют. Исключение — если конкретная сумка или головной убор обязательны по расписанию/дресс-коду, тогда они переходят из optional в required slot.
+
 ### Этап D — оценить
 
 После hard gates итоговый score нормализуется от 0 до 1:
@@ -131,6 +134,7 @@ Hard filters:
 | Rotation | 0.10 | Не забывать вещи и не повторять один комплект слишком часто |
 | Fit confidence | 0.08 | Подтверждённая посадка лучше неизвестной |
 | Care cost | 0.05 | Не создавать лишнюю стирку без причины |
+| Styling layer | configurable | Поддержка выбранного стиля через украшения, сумку, головной убор и hair direction |
 
 Вес — конфигурация и стартовая гипотеза. Safety не может быть компенсирована высоким style score, потому что критичные погодные требования уже отсеяны hard gates.
 

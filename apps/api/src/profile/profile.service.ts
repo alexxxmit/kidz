@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import type { Profile, ProfileInput, StyleMixEntry } from "@kidz/contracts";
+import type { HairProfile, Profile, ProfileInput, StyleMixEntry } from "@kidz/contracts";
 import { eq } from "drizzle-orm";
 
 import { DatabaseService } from "../database/database.service.js";
@@ -19,6 +19,8 @@ export class ProfileService {
         locale: input.locale,
         ageYears: input.ageYears,
         autonomyMode: input.autonomyMode,
+        genderPresentation: input.genderPresentation,
+        hairProfile: input.hairProfile,
         styleMix: input.styleMix,
       })
       .returning();
@@ -29,6 +31,8 @@ export class ProfileService {
       locale: row.locale as Profile["locale"],
       ageYears: row.ageYears,
       autonomyMode: row.autonomyMode as Profile["autonomyMode"],
+      genderPresentation: row.genderPresentation as Profile["genderPresentation"],
+      hairProfile: row.hairProfile as HairProfile,
       styleMix: row.styleMix as StyleMixEntry[],
       createdAt: row.createdAt.toISOString(),
     };
@@ -43,6 +47,8 @@ export class ProfileService {
       locale: row.locale as Profile["locale"],
       ageYears: row.ageYears,
       autonomyMode: row.autonomyMode as Profile["autonomyMode"],
+      genderPresentation: row.genderPresentation as Profile["genderPresentation"],
+      hairProfile: row.hairProfile as HairProfile,
       styleMix: row.styleMix as StyleMixEntry[],
       createdAt: row.createdAt.toISOString(),
     };

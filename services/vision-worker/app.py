@@ -24,6 +24,18 @@ class AnalyzeResponse(BaseModel):
     requires_confirmation: list[str]
 
 
+class CutoutRequest(BaseModel):
+    object_key: str = Field(min_length=1, max_length=1024)
+
+
+class CutoutResponse(BaseModel):
+    status: Literal["mock_ready", "ready", "failed"] = "mock_ready"
+    provider: str
+    source_object_key: str
+    cutout_object_key: str
+    transparent_background: bool
+
+
 app = FastAPI(title="Kidz Vision Worker", version="0.1.0")
 
 
@@ -50,4 +62,17 @@ def analyze(request: AnalyzeRequest):
             "warmth": Attribute(value=1, confidence=0.4, source="MODEL_INFERRED"),
         },
         requires_confirmation=["category", "colors", "warmth"],
+    )
+
+
+@app.post("/v1/cutout", response_model=CutoutResponse)
+def cutout(request: CutoutRequest):
+    # This is a provider boundary, not real segmentation. Production should replace it
+    # with a zero-retention background-removal/segmentation provider and store the PNG
+    # with transparent background as cutout_object_key.
+    return CutoutResponse(
+        provider=os.getenv("VISION_PROVIDER", "mock"),
+        source_object_key=request.object_key,
+        cutout_object_key=f"mock-cutout/{request.object_key}",
+        transparent_background=False,
     )
