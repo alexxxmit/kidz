@@ -4,6 +4,8 @@ WORKDIR /app
 
 ARG EXPO_PUBLIC_API_URL
 ENV EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL
+ARG EXPO_PUBLIC_VISION_URL
+ENV EXPO_PUBLIC_VISION_URL=$EXPO_PUBLIC_VISION_URL
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
 COPY packages/contracts/package.json packages/contracts/package.json

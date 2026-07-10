@@ -1,5 +1,7 @@
 import { STYLE_CATALOG } from "@kidz/domain";
 
+export const dynamic = "force-dynamic";
+
 type Report = { id: string; targetType: string; reason: string; status: string; createdAt: string; details?: string | null };
 type Queue = { reports: Report[]; metrics: { open: number; reviewing: number; resolved: number } };
 
