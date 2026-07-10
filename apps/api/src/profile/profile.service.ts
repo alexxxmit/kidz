@@ -21,6 +21,7 @@ export class ProfileService {
         autonomyMode: input.autonomyMode,
         genderPresentation: input.genderPresentation,
         hairProfile: input.hairProfile,
+        schoolDressCode: input.schoolDressCode,
         styleMix: input.styleMix,
       })
       .returning();
@@ -33,6 +34,7 @@ export class ProfileService {
       autonomyMode: row.autonomyMode as Profile["autonomyMode"],
       genderPresentation: row.genderPresentation as Profile["genderPresentation"],
       hairProfile: row.hairProfile as HairProfile,
+      schoolDressCode: row.schoolDressCode as Profile["schoolDressCode"],
       styleMix: row.styleMix as StyleMixEntry[],
       createdAt: row.createdAt.toISOString(),
     };
@@ -49,6 +51,7 @@ export class ProfileService {
       autonomyMode: row.autonomyMode as Profile["autonomyMode"],
       genderPresentation: row.genderPresentation as Profile["genderPresentation"],
       hairProfile: row.hairProfile as HairProfile,
+      schoolDressCode: row.schoolDressCode as Profile["schoolDressCode"],
       styleMix: row.styleMix as StyleMixEntry[],
       createdAt: row.createdAt.toISOString(),
     };

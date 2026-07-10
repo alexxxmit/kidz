@@ -21,8 +21,64 @@ const styleAffinity = (item: CandidateItem, targetStyleId: string) => {
     const itemTraits = styleTraits.get(itemStyleId);
     if (!itemTraits?.size) return best;
     const shared = [...target].filter((trait) => itemTraits.has(trait)).length;
-    return Math.max(best, (shared / target.size) * 0.68);
+    return Math.max(best, (shared / target.size) * 0.28);
   }, 0);
+};
+
+const parseLuminance = (value: string) => {
+  const named: Record<string, number> = { black: 0.04, white: 0.98, gray: 0.5, grey: 0.5, navy: 0.12, beige: 0.76, cream: 0.9, brown: 0.25 };
+  if (named[value.toLowerCase()] !== undefined) return named[value.toLowerCase()]!;
+  const hex = value.replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return 0.5;
+  const channels = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
+};
+
+const itemIsLight = (item: CandidateItem) => parseLuminance(item.colors[0] ?? "#808080") >= 0.72;
+const itemIsDark = (item: CandidateItem) => parseLuminance(item.colors[0] ?? "#808080") <= 0.38;
+const feminineCategories = new Set(["dress", "skirt", "hair_accessory", "headband", "earrings"]);
+
+const itemPresentationScore = (item: CandidateItem, presentation: OutfitRequest["profile"]["genderPresentation"]) => {
+  const feminineSignal = feminineCategories.has(item.category) || /mary jane|балетк|bow|бант/i.test(item.name);
+  if (presentation === "FEMININE") return feminineSignal ? 1 : 0.82;
+  if (presentation === "MASCULINE") return feminineSignal ? 0.08 : 1;
+  return feminineSignal ? 0.28 : 1;
+};
+
+const presentationScore = (items: CandidateItem[], request: OutfitRequest) => clamp(items.reduce((sum, item) => sum + itemPresentationScore(item, request.profile.genderPresentation), 0) / Math.max(items.length, 1));
+
+const itemDressCodeScore = (item: CandidateItem, request: OutfitRequest) => {
+  if (request.weather.occasion !== "school" || request.profile.schoolDressCode === "FREE_STYLE" || request.profile.schoolDressCode === "NOT_APPLICABLE") return 1;
+  if (request.profile.schoolDressCode === "WHITE_TOP") return item.slot === "top" ? (itemIsLight(item) ? 1 : 0.08) : 1;
+  if (item.styleIds.includes("school-uniform")) return 1;
+  if (item.slot === "top") return item.category === "shirt" && itemIsLight(item) ? 1 : itemIsLight(item) ? 0.68 : 0.12;
+  if (item.slot === "bottom") return ["trousers", "skirt"].includes(item.category) && itemIsDark(item) ? 1 : itemIsDark(item) ? 0.55 : 0.15;
+  if (item.slot === "footwear") return ["shoes", "boots"].includes(item.category) ? 1 : itemIsLight(item) || itemIsDark(item) ? 0.72 : 0.35;
+  if (item.slot === "mid_layer" || item.slot === "outerwear") return ["sweater", "jacket", "coat"].includes(item.category) ? 0.9 : 0.55;
+  return 0.8;
+};
+
+const dressCodeScore = (items: CandidateItem[], request: OutfitRequest) => clamp(items.reduce((sum, item) => sum + itemDressCodeScore(item, request), 0) / Math.max(items.length, 1));
+
+const styleSignatureScore = (items: CandidateItem[], styleId: string) => {
+  if (!items.length) return 0;
+  const exact = items.filter((item) => item.styleIds.includes(styleId)).length / items.length;
+  if (styleId === "stockholm") {
+    const quiet = items.filter((item) => {
+      const luminance = parseLuminance(item.colors[0] ?? "#808080");
+      return luminance <= 0.42 || luminance >= 0.68;
+    }).length / items.length;
+    const silhouette = items.filter((item) => ["shirt", "sweater", "coat", "jacket", "trousers", "jeans", "sneakers", "shoes", "boots", "tote", "watch", "necklace"].includes(item.category)).length / items.length;
+    const noisy = items.filter((item) => /график|принт|graphic|logo/i.test(item.name)).length / items.length;
+    return clamp(exact * 0.5 + quiet * 0.23 + silhouette * 0.32 - noisy * 0.35);
+  }
+  if (styleId === "emo") {
+    const dark = items.filter(itemIsDark).length / items.length;
+    const codes = items.filter((item) => ["tshirt", "hoodie", "jeans", "skirt", "sneakers", "boots", "belt", "necklace", "bracelet"].includes(item.category)).length / items.length;
+    const layered = items.some((item) => item.slot === "mid_layer") || items.some((item) => /полос|striped|график|graphic/i.test(item.name));
+    return clamp(exact * 0.52 + dark * 0.25 + codes * 0.18 + (layered ? 0.12 : 0));
+  }
+  return exact;
 };
 
 const targetWarmth = (temperatureC: number): number => {
@@ -40,7 +96,9 @@ const weightedStyleScore = (
   const totalWeight = styleMix.reduce((sum, style) => sum + style.weight, 0) || 1;
   const score = styleMix.reduce((sum, style) => {
     const affinity = items.reduce((itemSum, item) => itemSum + styleAffinity(item, style.styleId), 0);
-    return sum + (affinity / Math.max(items.length, 1)) * style.weight;
+    const exact = items.filter((item) => item.styleIds.includes(style.styleId)).length / Math.max(items.length, 1);
+    const signature = styleSignatureScore(items, style.styleId);
+    return sum + ((affinity / Math.max(items.length, 1)) * 0.25 + exact * 0.5 + signature * 0.25) * style.weight;
   }, 0);
   return clamp(score / totalWeight);
 };
@@ -89,16 +147,29 @@ const weatherScore = (
 };
 
 const combinations = (
-  wardrobe: CandidateItem[],
-  styleMix: OutfitRequest["profile"]["styleMix"],
+  request: OutfitRequest,
 ): CandidateItem[][] => {
-  const available = wardrobe.filter(
+  const available = request.wardrobe.filter(
     (item) => item.careState !== "LAUNDRY" && item.fitState !== "OUTGROWN",
   );
-  const ranked = (items: CandidateItem[], limit: number) =>
-    [...items]
-      .sort((a, b) => itemStyleScore(b, styleMix) - itemStyleScore(a, styleMix))
+  const targetStyles = new Set(request.profile.styleMix.map((style) => style.styleId));
+  const rankScore = (item: CandidateItem) => itemStyleScore(item, request.profile.styleMix) * 0.72 + itemPresentationScore(item, request.profile.genderPresentation) * 0.18 + itemDressCodeScore(item, request) * 0.1;
+  const ranked = (items: CandidateItem[], limit: number) => {
+    let candidates = [...items];
+    if (request.weather.occasion === "school" && !["FREE_STYLE", "NOT_APPLICABLE"].includes(request.profile.schoolDressCode)) {
+      const dressCodeMatches = candidates.filter((item) => itemDressCodeScore(item, request) >= 0.9);
+      if (dressCodeMatches.length) candidates = dressCodeMatches;
+    }
+    if (request.profile.genderPresentation === "MASCULINE") {
+      const presentationMatches = candidates.filter((item) => itemPresentationScore(item, request.profile.genderPresentation) >= 0.9);
+      if (presentationMatches.length) candidates = presentationMatches;
+    }
+    const exactStyleMatches = candidates.filter((item) => item.styleIds.some((styleId) => targetStyles.has(styleId)));
+    if (exactStyleMatches.length) candidates = exactStyleMatches;
+    return candidates
+      .sort((a, b) => rankScore(b) - rankScore(a))
       .slice(0, limit);
+  };
   const tops = ranked(available.filter((item) => item.slot === "top"), 7);
   const bottoms = ranked(available.filter((item) => item.slot === "bottom"), 7);
   const onePieces = ranked(available.filter((item) => item.slot === "one_piece"), 4);
@@ -113,18 +184,12 @@ const combinations = (
   ];
   const optionalBySlot = (slot: GarmentSlot): Array<CandidateItem | undefined> => [
     undefined,
-    ...available
-      .filter((item) => item.slot === slot)
-      .sort((a, b) => itemStyleScore(b, styleMix) - itemStyleScore(a, styleMix))
-      .slice(0, 2),
+    ...ranked(available.filter((item) => item.slot === slot), 2),
   ];
   const headwear = optionalBySlot("headwear");
   const jewelry = [
     undefined,
-    ...available
-      .filter((item) => item.slot === "jewelry" || item.slot === "accessory")
-      .sort((a, b) => itemStyleScore(b, styleMix) - itemStyleScore(a, styleMix))
-      .slice(0, 2),
+    ...ranked(available.filter((item) => item.slot === "jewelry" || item.slot === "accessory"), 2),
   ];
   const bags = optionalBySlot("bag");
   const bodies: CandidateItem[][] = [
@@ -160,8 +225,10 @@ const optionSignature = (items: CandidateItem[]) =>
     .join("|");
 
 export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
-  const candidates = combinations(request.wardrobe, request.profile.styleMix).map((items, index) => {
+  const candidates = combinations(request).map((items, index) => {
     const style = weightedStyleScore(items, request.profile.styleMix);
+    const presentation = presentationScore(items, request);
+    const dressCode = dressCodeScore(items, request);
     const weather = weatherScore(items, request);
     const completeness = completenessScore(items);
     const styling = buildStylingGuidance(request.profile, items);
@@ -173,17 +240,21 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
       0.072,
     );
     const score = clamp(
-      style * 0.31 +
-      weather.score * 0.27 +
-      completeness.score * 0.23 +
-      styling.stylingScore * 0.11 +
-      rotation * 0.08 +
+      style * 0.48 +
+      presentation * 0.17 +
+      dressCode * 0.12 +
+      weather.score * 0.1 +
+      completeness.score * 0.07 +
+      styling.stylingScore * 0.04 +
+      rotation * 0.02 +
       totalLookBonus,
     );
     const reasonCodes = [
       style >= 0.5 ? "STYLE_MATCH" : "STYLE_EXPLORATION",
       "HAIR_DIRECTION",
       "MAKEUP_DIRECTION",
+      presentation >= 0.8 ? "PRESENTATION_MATCH" : "PRESENTATION_FLEX",
+      request.weather.occasion === "school" ? `DRESS_CODE_${request.profile.schoolDressCode}` : "NO_DRESS_CODE",
       items.some((item) => item.slot === "jewelry" || item.slot === "bag" || item.slot === "accessory")
         ? "ACCESSORY_BALANCE"
         : "ACCESSORY_IDEA",
@@ -196,6 +267,8 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
       score: Number(score.toFixed(4)),
       scores: {
         style: Number(style.toFixed(3)),
+        presentation: Number(presentation.toFixed(3)),
+        dressCode: Number(dressCode.toFixed(3)),
         weather: Number(weather.score.toFixed(3)),
         completeness: Number(completeness.score.toFixed(3)),
         rotation: Number(rotation.toFixed(3)),

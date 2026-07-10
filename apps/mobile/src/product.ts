@@ -26,6 +26,7 @@ const profileFor = (styleId: string, locale: Locale = "ru") => ({
   autonomyMode: "USER_DECIDES" as const,
   genderPresentation: "FEMININE" as const,
   hairProfile: { length: "LONG" as const, color: "DARK_BROWN" as const, openToColorAdvice: true },
+  schoolDressCode: "FREE_STYLE" as const,
   styleMix: [{ styleId, weight: 1 }],
 });
 

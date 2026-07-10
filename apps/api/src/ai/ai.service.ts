@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import type { AiStylistInput, AiStylistResponse } from "@kidz/contracts";
+import { WardrobeVisionResultSchema, type AiStylistInput, type AiStylistResponse, type GarmentCategory, type GarmentSlot, type WardrobeVisionInput, type WardrobeVisionResult } from "@kidz/contracts";
+import { STYLE_CATALOG } from "@kidz/domain";
 
 import { ModerationService } from "../safety/moderation.service.js";
 
@@ -16,6 +17,26 @@ const localAnswer = (input: AiStylistInput): AiStylistResponse => {
     provider: "local",
   };
 };
+
+const categorySlots: Record<GarmentCategory, GarmentSlot> = {
+  tshirt: "top", shirt: "top", hoodie: "mid_layer", sweater: "mid_layer", jacket: "outerwear", coat: "outerwear",
+  jeans: "bottom", trousers: "bottom", skirt: "bottom", dress: "one_piece", shorts: "bottom",
+  sneakers: "footwear", boots: "footwear", shoes: "footwear", hat: "headwear", cap: "headwear", beanie: "headwear",
+  headband: "headwear", hair_accessory: "headwear", scarf: "accessory", belt: "accessory", necklace: "jewelry",
+  bracelet: "jewelry", ring: "jewelry", earrings: "jewelry", watch: "jewelry", bag: "bag", backpack: "bag",
+  crossbody_bag: "bag", tote: "bag", accessory: "accessory",
+};
+
+const localWardrobeAnalysis = (input: WardrobeVisionInput): WardrobeVisionResult => ({
+  name: input.locale === "ru" ? "Новая вещь · проверь тип" : "New piece · check type",
+  category: "tshirt",
+  slot: "top",
+  colors: ["#808080"],
+  warmth: 1,
+  styleIds: input.selectedStyleIds,
+  confidence: 0,
+  provider: "local",
+});
 
 @Injectable()
 export class AiService {
@@ -78,6 +99,64 @@ export class AiService {
       };
     } catch {
       return localAnswer(input);
+    }
+  }
+
+  async analyzeWardrobe(input: WardrobeVisionInput): Promise<WardrobeVisionResult> {
+    const key = process.env.OPENAI_API_KEY;
+    const under13Allowed = process.env.OPENAI_ZERO_DATA_RETENTION === "true";
+    if (!key || (input.ageYears < 13 && !under13Allowed)) return localWardrobeAnalysis(input);
+
+    const categories = Object.keys(categorySlots) as GarmentCategory[];
+    const allowedStyles = [...STYLE_CATALOG.map((style) => style.id), "school-uniform"];
+    const language = input.locale === "ru" ? "Russian" : "English";
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string" },
+        category: { type: "string", enum: categories },
+        slot: { type: "string", enum: [...new Set(Object.values(categorySlots))] },
+        colors: { type: "array", minItems: 1, maxItems: 4, items: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$" } },
+        warmth: { type: "integer", minimum: 0, maximum: 4 },
+        styleIds: { type: "array", maxItems: 8, items: { type: "string", enum: allowedStyles } },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+      },
+      required: ["name", "category", "slot", "colors", "warmth", "styleIds", "confidence"],
+    };
+    const selected = input.selectedStyleIds.join(", ");
+    const instructions = [
+      "You classify one photographed wardrobe item for a private digital closet.",
+      `Return the short item name in ${language}. Never describe a person, body, face, age, brand or price.`,
+      "Classify only the most prominent garment, shoe, bag, headwear, jewelry or accessory in the image.",
+      "Use visible dominant colors as uppercase 6-digit hex values. Warmth is 0 for jewelry/accessories, 1 for light, 2 for medium, 3 for warm, 4 for winter.",
+      `Style tags must come only from this catalog: ${allowedStyles.join(", ")}. Add school-uniform only when the item visibly belongs to a school uniform.`,
+      `The user's selected directions are ${selected}; include them only when the photographed item can genuinely work in those aesthetics.`,
+      "If the image is unclear, choose the closest category and lower confidence. Do not invent details that are not visible.",
+    ].join("\n");
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.OPENAI_VISION_MODEL ?? "gpt-5.4-mini",
+          store: false,
+          instructions,
+          input: [{ role: "user", content: [{ type: "input_text", text: "Classify this wardrobe item." }, { type: "input_image", image_url: input.imageDataUrl, detail: "low" }] }],
+          text: { format: { type: "json_schema", name: "wardrobe_item", strict: true, schema } },
+          max_output_tokens: 240,
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (!response.ok) throw new Error(`responses ${response.status}`);
+      const payload = (await response.json()) as { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> };
+      const output = payload.output_text ?? payload.output?.flatMap((item) => item.content ?? []).find((item) => item.text)?.text;
+      if (!output) throw new Error("empty response");
+      const parsed = WardrobeVisionResultSchema.parse({ ...JSON.parse(output), provider: "openai" });
+      const canonicalSlot = categorySlots[parsed.category];
+      return { ...parsed, slot: canonicalSlot, styleIds: parsed.styleIds.filter((styleId) => allowedStyles.includes(styleId)) };
+    } catch {
+      return localWardrobeAnalysis(input);
     }
   }
 }

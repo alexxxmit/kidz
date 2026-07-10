@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption } from "@kidz/contracts";
+import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system/legacy";
@@ -52,6 +52,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   askAiStylist,
+  analyzeWardrobePhoto,
   acceptFollowRequest,
   createGuestSession,
   createSocialConversation,
@@ -73,6 +74,7 @@ import {
 } from "../src/api";
 import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS } from "../src/appearance";
 import { STARTER_WARDROBE } from "../src/demo";
+import { BeautyReference, GarmentIllustration, OccasionIllustration, SchoolDressCodeIllustration } from "../src/illustrations";
 import { CHALLENGES, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
 
@@ -86,12 +88,13 @@ type ProfileState = {
   styles: string[];
   genderPresentation: GenderPresentation;
   hairProfile: HairProfile;
+  schoolDressCode: SchoolDressCode;
 };
 
 const PROFILE_KEY = "mira.profile.v2";
 const TOKEN_KEY = "mira.session.v1";
 const WARDROBE_KEY = "mira.wardrobe.v1";
-const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm", "emo"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE };
+const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE" };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
 const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
@@ -170,8 +173,8 @@ export default function MiraApp() {
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
-          setProfile({ ...defaultProfile, ...parsed, genderPresentation: parsed.genderPresentation ?? defaultProfile.genderPresentation, hairProfile: { ...DEFAULT_HAIR_PROFILE, ...parsed.hairProfile } });
-          if (!parsed.genderPresentation || !parsed.hairProfile) setOverlay("onboarding");
+          setProfile({ ...defaultProfile, ...parsed, genderPresentation: parsed.genderPresentation ?? defaultProfile.genderPresentation, hairProfile: { ...DEFAULT_HAIR_PROFILE, ...parsed.hairProfile }, schoolDressCode: parsed.schoolDressCode ?? defaultProfile.schoolDressCode });
+          if (!parsed.genderPresentation || !parsed.hairProfile || !parsed.schoolDressCode) setOverlay("onboarding");
         } catch { setOverlay("onboarding"); }
       } else {
         setOverlay("onboarding");
@@ -226,6 +229,7 @@ export default function MiraApp() {
         styleMix: next.styles.map((styleId) => ({ styleId, weight: 1 / next.styles.length })),
         genderPresentation: next.genderPresentation,
         hairProfile: next.hairProfile,
+        schoolDressCode: next.age < 6 ? "NOT_APPLICABLE" : next.schoolDressCode,
       }).catch(() => undefined);
       generateFor(next, occasion);
       return;
@@ -241,6 +245,7 @@ export default function MiraApp() {
         styleMix: next.styles.map((styleId) => ({ styleId, weight: 1 / next.styles.length })),
         genderPresentation: next.genderPresentation,
         hairProfile: next.hairProfile,
+        schoolDressCode: next.age < 6 ? "NOT_APPLICABLE" : next.schoolDressCode,
       });
       setToken(session.accessToken);
       await storage.setToken(session.accessToken);
@@ -264,6 +269,7 @@ export default function MiraApp() {
         autonomyMode: target.age <= 5 ? "PARENT_DECIDES" : target.age <= 9 ? "TOGETHER" : "USER_DECIDES",
         genderPresentation: target.genderPresentation,
         hairProfile: target.hairProfile,
+        schoolDressCode: target.age < 6 ? "NOT_APPLICABLE" : target.schoolDressCode,
         styleMix: target.styles.map((styleId) => ({ styleId, weight: 1 / target.styles.length })),
       },
       wardrobe: wardrobe.map(({ localId: _id, ...item }) => item),
@@ -305,15 +311,24 @@ export default function MiraApp() {
   };
 
   const addPhoto = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.72, allowsEditing: false, base64: true });
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.62, allowsEditing: false, base64: true });
     if (result.canceled || !result.assets[0]) return;
-    const source = STARTER_WARDROBE[0]!;
     const asset = result.assets[0];
     const localId = `photo-${Date.now()}`;
     const storedSource = await persistWardrobeImage(asset.uri, localId, "source").catch(() => asset.uri);
-    setWardrobe((items) => [{ ...source, name: tx(locale, "Новая вещь", "New piece"), imageUri: storedSource, imageProcessingState: "PENDING_CUTOUT", localId }, ...items]);
-    notify(tx(locale, "Фото добавлено · AI вырезает фон", "Photo added · AI is removing the background"));
+    const draftItem = { name: tx(locale, "AI распознаёт вещь…", "AI is scanning this piece…"), category: "tshirt" as const, slot: "top" as const, colors: ["#808080"], warmth: 1, styleIds: profile.styles, careState: "CLEAN" as const, fitState: "FITS" as const, imageUri: storedSource, imageProcessingState: "PENDING_CUTOUT" as const, localId };
+    setWardrobe((items) => [draftItem, ...items]);
+    notify(tx(locale, "Фото добавлено · AI распознаёт вещь и вырезает фон", "Photo added · AI is identifying the piece and removing its background"));
     if (asset.base64) {
+      if (token) {
+        const imageDataUrl = `data:${asset.mimeType ?? "image/jpeg"};base64,${asset.base64}`;
+        void analyzeWardrobePhoto(token, { ageYears: profile.age, locale, imageDataUrl, selectedStyleIds: profile.styles }).then((analysis) => {
+          setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: analysis.name, category: analysis.category, slot: analysis.slot, colors: analysis.colors, warmth: analysis.warmth, styleIds: analysis.styleIds.length ? analysis.styleIds : profile.styles } : item));
+          notify(analysis.provider === "openai" ? tx(locale, `Распознано: ${analysis.name}`, `Identified: ${analysis.name}`) : tx(locale, "Фото сохранено · тип можно уточнить позже", "Photo saved · you can refine the type later"));
+        }).catch(() => setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Новая вещь · проверь тип", "New piece · check type") } : item)));
+      } else {
+        setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Новая вещь · проверь тип", "New piece · check type") } : item));
+      }
       void cutoutWardrobePhoto(asset.base64).then((cutoutUri) => persistWardrobeImage(cutoutUri, localId, "cutout")).then((cutoutUri) => {
         setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" } : item));
         notify(tx(locale, "Фон вырезан · вещь готова", "Background removed · piece is ready"));
@@ -426,6 +441,7 @@ export default function MiraApp() {
             {tab === "create" && (
               <CreateScreen
                 locale={locale}
+                profile={profile}
                 styleNames={selectedNames}
                 occasion={occasion}
                 setOccasion={(value) => { setOccasion(value); generateFor(profile, value); }}
@@ -498,7 +514,7 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
           <LinearGradient colors={["#ECE8FF", "#F7E9F0", "#E7F5F5"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
           <View style={styles.heroLookTop}><View><Text style={styles.miniLabel}>{tx(locale, "MIRA ПОДОБРАЛА", "MIRA PICKED")}</Text><Text style={styles.lookMood}>{styleNames[0] ?? "your style"}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>{Math.round(look.score * 100)}%</Text></View></View>
           <OutfitCanvas look={look} large />
-          <TotalLookSummary locale={locale} look={look} />
+          <TotalLookSummary locale={locale} look={look} profile={profile} />
           <View style={styles.heroActions}>
             <Pressable onPress={onCreate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Изменить", "Remix")}</Text></Pressable>
             <Pressable onPress={onPublish} style={styles.primaryAction}><Text style={styles.primaryActionText}>{tx(locale, "Это мой лук", "Wear this")}</Text><ChevronRight size={17} color={colors.paper} /></Pressable>
@@ -567,17 +583,17 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   );
 }
 
-function CreateScreen({ locale, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish }: { locale: Locale; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void }) {
+function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void }) {
   const look = outfits[activeLook];
   return (
     <View>
       <Text style={styles.eyebrow}>{tx(locale, "AI LOOK LAB", "AI LOOK LAB")}</Text><Text style={styles.screenTitle}>{tx(locale, "Собери настроение", "Build a mood")}</Text><Text style={styles.lead}>{tx(locale, "MIRA использует только вещи из твоего шкафа. Ты решаешь, что оставить.", "MIRA uses only your real closet. You decide what stays.")}</Text>
       <Text style={styles.fieldCaption}>{tx(locale, "КУДА СОБИРАЕМСЯ?", "WHAT'S THE PLAN?")}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionRail}>
-        {[["school", "🎒", tx(locale, "Школа", "School")], ["walk", "☕", tx(locale, "Прогулка", "Out")], ["party", "✦", tx(locale, "Вечеринка", "Party")], ["sport", "⚡", tx(locale, "Спорт", "Sport")]].map(([id, emoji, label]) => <Pressable key={id} onPress={() => setOccasion(id!)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><Text style={styles.occasionEmoji}>{emoji}</Text><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
+        {([{ id: "school", label: tx(locale, "Школа", "School") }, { id: "walk", label: tx(locale, "Прогулка", "Out") }, { id: "party", label: tx(locale, "Вечеринка", "Party") }, { id: "sport", label: tx(locale, "Спорт", "Sport") }] as const).map(({ id, label }) => <Pressable key={id} onPress={() => setOccasion(id)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><OccasionIllustration occasion={id} active={occasion === id} /><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
       </ScrollView>
       <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
-      {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} /></View>}
+      {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} profile={profile} /></View>}
       <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
       <View style={styles.builderActions}><Pressable onPress={regenerate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Ещё варианты", "New options")}</Text></Pressable><Pressable onPress={publish} style={styles.primaryAction}><ImagePlus size={17} color={colors.paper} /><Text style={styles.primaryActionText}>{tx(locale, "Опубликовать", "Share look")}</Text></Pressable></View>
       <View style={styles.tipCard}><WandSparkles size={19} color={colors.ultraviolet} /><Text style={styles.tipText}>{tx(locale, "Нажми на вещь в готовом образе, чтобы заменить только её — остальной mood сохранится.", "Tap a piece to swap only that item while keeping the mood.")}</Text></View>
@@ -594,7 +610,7 @@ function ClosetScreen({ locale, wardrobe, addPhoto }: { locale: Locale; wardrobe
       <View style={styles.closetStats}><View><Text style={styles.statValue}>{wardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>86%</Text><Text style={styles.statLabel}>{tx(locale, "носятся", "in rotation")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>42</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
       <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Сфотографируй вещь", "Photograph a piece")}</Text><Text style={styles.scanBody}>{tx(locale, "AI вырежет фон и заполнит карточку", "AI removes the background and fills the details")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>{[["all", tx(locale, "Все", "All")], ["top", tx(locale, "Верх", "Tops")], ["bottom", tx(locale, "Низ", "Bottoms")], ["footwear", tx(locale, "Обувь", "Shoes")], ["bag", tx(locale, "Сумки", "Bags")], ["jewelry", tx(locale, "Украшения", "Jewelry")]].map(([id, label]) => <Pressable key={id} onPress={() => setFilter(id!)} style={[styles.filterChip, filter === id && styles.filterChipActive]}><Text style={[styles.filterText, filter === id && styles.filterTextActive]}>{label}</Text></Pressable>)}</ScrollView>
-      <View style={styles.closetGrid}>{visible.map((item) => <View key={item.localId} style={styles.closetItem}><View style={[styles.closetArt, { backgroundColor: item.colors[0] ?? colors.violetMist }]}>{item.imageUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <Shirt size={31} color={"#FFFFFFCC"} />}{item.imageProcessingState === "PENDING_CUTOUT" && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>AI</Text></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={styles.closetMeta}>{item.careState === "CLEAN" ? tx(locale, "готово", "ready") : item.careState.toLowerCase()}</Text></View>)}</View>
+      <View style={styles.closetGrid}>{visible.map((item) => <View key={item.localId} style={styles.closetItem}><View style={styles.closetArt}>{item.imageUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <GarmentIllustration item={item} height={104} />}{item.imageProcessingState === "PENDING_CUTOUT" && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>AI</Text></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={styles.closetMeta}>{item.careState === "CLEAN" ? tx(locale, "готово", "ready") : item.careState.toLowerCase()}</Text></View>)}</View>
     </View>
   );
 }
@@ -604,12 +620,13 @@ function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onPlu
   const genderLabel = GENDER_OPTIONS.find((option) => option.id === profile.genderPresentation)?.label[locale];
   const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
   const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
+  const schoolLabel = profile.schoolDressCode === "UNIFORM" ? tx(locale, "форма", "uniform") : profile.schoolDressCode === "WHITE_TOP" ? tx(locale, "белый верх", "white top") : tx(locale, "свободная школа", "free school style");
   return (
     <View>
       <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{profile.nickname.slice(0, 1).toUpperCase()}</Text></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль", "Edit profile")}</Text></Pressable></View>
       <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>0</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>{inspired}</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
       <View style={styles.profileStyleCard}><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.miniLabel}>MY STYLE DNA</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text><Text style={styles.profileStyleBody}>{tx(locale, "Стиль меняется вместе с тобой. Это направление, а не ярлык.", "Your style grows with you. It is a direction, not a label.")}</Text></View>
-      <Pressable onPress={onEdit} style={styles.appearanceProfileCard}><View style={styles.appearanceProfileIcon}><Sparkles size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Параметры рекомендаций", "Guidance preferences")}</Text><Text style={styles.privacyBody}>{genderLabel} · {hairLength} · {hairColor}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
+      <Pressable onPress={onEdit} style={styles.appearanceProfileCard}><View style={styles.appearanceProfileIcon}><Sparkles size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Параметры рекомендаций", "Guidance preferences")}</Text><Text style={styles.privacyBody}>{genderLabel} · {hairLength} · {hairColor}{profile.age >= 6 ? ` · ${schoolLabel}` : ""}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
       <View style={styles.privacyCard}><View style={styles.privacyIcon}><LockKeyhole size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{mode === "social" ? tx(locale, "Профиль виден только твоему кругу", "Only your circle sees your profile") : tx(locale, "Закрытый возрастной режим", "Age-safe private mode")}</Text><Text style={styles.privacyBody}>{tx(locale, "Возраст не показывается. Геолокация и школа никогда не публикуются.", "Your age, school and location are never shown.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
       <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитный AI, капсулы и умные покупки", "Unlimited AI, capsules and smart shopping")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
       <SectionTitle title={tx(locale, "Твои луки", "Your looks")} action={`${posts.length}`} />
@@ -624,27 +641,26 @@ function OutfitCanvas({ look, large = false }: { look: OutfitOption; large?: boo
     <View style={[styles.outfitCanvas, large && styles.outfitCanvasLarge]}>
       {look.items.slice(0, large ? 7 : 6).map((item, index) => {
         const uri = item.cutoutUri ?? item.imageUri;
-        return <View key={`${item.name}-${index}`} style={[styles.outfitPiece, large && styles.outfitPieceLarge, { transform: [{ rotate: `${index % 2 ? 3 : -3}deg` }], marginTop: index % 3 === 1 ? 13 : 0 }]}>{uri ? <Image source={{ uri }} style={styles.outfitImage} resizeMode="contain" /> : <View style={[styles.outfitColor, { backgroundColor: item.colors[0] ?? colors.powder }]}><Shirt size={large ? 24 : 18} color="#FFFFFFD8" /></View>}<Text numberOfLines={1} style={styles.outfitItemName}>{item.name}</Text></View>;
+        return <View key={`${item.name}-${index}`} style={[styles.outfitPiece, large && styles.outfitPieceLarge, { transform: [{ rotate: `${index % 2 ? 3 : -3}deg` }], marginTop: index % 3 === 1 ? 13 : 0 }]}>{uri ? <Image source={{ uri }} style={styles.outfitImage} resizeMode="contain" /> : <GarmentIllustration item={item} height={large ? 112 : 88} />}<Text numberOfLines={1} style={styles.outfitItemName}>{item.name}</Text></View>;
       })}
     </View>
   );
 }
 
-function TotalLookSummary({ locale, look }: { locale: Locale; look: OutfitOption }) {
+function TotalLookSummary({ locale, look, profile }: { locale: Locale; look: OutfitOption; profile: ProfileState }) {
   const details = look.items.filter((item) => ["headwear", "jewelry", "bag", "accessory"].includes(item.slot));
   return <View style={styles.totalLookSummary}>
     <View style={styles.totalLookSummaryTop}><Text style={styles.totalLookLabel}>{tx(locale, "ПОЛНЫЙ ОБРАЗ", "TOTAL LOOK")}</Text><View style={styles.freeBadge}><Text style={styles.freeBadgeText}>{tx(locale, "БЕСПЛАТНО", "FREE")}</Text></View></View>
-    <View style={styles.totalLookChips}><View style={styles.totalLookChip}><Text style={styles.totalLookChipLabel}>{tx(locale, "Укладка", "Hair")}</Text><Text numberOfLines={1} style={styles.totalLookChipValue}>{look.hair.title}</Text></View><View style={styles.totalLookChip}><Text style={styles.totalLookChipLabel}>{tx(locale, "Макияж", "Makeup")}</Text><Text numberOfLines={1} style={styles.totalLookChipValue}>{look.makeup.title}</Text></View><View style={styles.totalLookChip}><Text style={styles.totalLookChipLabel}>{tx(locale, "Детали", "Details")}</Text><Text numberOfLines={1} style={styles.totalLookChipValue}>{details.length ? details.map((item) => item.name).join(" · ") : tx(locale, "без перегруза", "kept minimal")}</Text></View></View>
+    <View style={styles.visualSummaryRow}><View style={styles.visualSummaryCard}><BeautyReference kind="hair" look={look} hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} recommendedColor={look.hair.recommendedColor} height={76} /><Text style={styles.visualSummaryLabel}>{tx(locale, "Укладка", "Hair")}</Text></View><View style={styles.visualSummaryCard}><BeautyReference kind="makeup" look={look} hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} height={76} /><Text style={styles.visualSummaryLabel}>{tx(locale, "Макияж", "Makeup")}</Text></View><View style={styles.visualSummaryCard}><BeautyReference kind="accessories" look={look} hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} height={76} /><Text numberOfLines={1} style={styles.visualSummaryLabel}>{details.length ? tx(locale, "Детали", "Details") : tx(locale, "Минимум", "Minimal")}</Text></View></View>
   </View>;
 }
 
-function TotalLookGuide({ locale, look }: { locale: Locale; look: OutfitOption }) {
+function TotalLookGuide({ locale, look, profile }: { locale: Locale; look: OutfitOption; profile: ProfileState }) {
   const details = look.items.filter((item) => ["headwear", "jewelry", "bag", "accessory"].includes(item.slot));
   return <View style={styles.totalLookGuide}>
     <View style={styles.totalLookGuideHeader}><View><Text style={styles.totalLookLabel}>{tx(locale, "ФИНАЛЬНЫЕ ШТРИХИ", "FINISHING TOUCHES")}</Text><Text style={styles.totalLookGuideTitle}>{tx(locale, "Всё уже входит в образ", "Everything is part of the look")}</Text></View><View style={styles.freeBadge}><Text style={styles.freeBadgeText}>{tx(locale, "БЕСПЛАТНО", "FREE")}</Text></View></View>
-    <View style={styles.guideCard}><Text style={styles.guideCardEyebrow}>{tx(locale, "УКЛАДКА · ПО ДЛИНЕ ВОЛОС", "HAIR · MATCHED TO LENGTH")}</Text><Text style={styles.guideCardTitle}>{look.hair.title}</Text><Text style={styles.guideCardBody}>{look.hair.detail}</Text>{look.hair.colorAdvice && <Text style={styles.colorAdvice}>{look.hair.colorAdvice}</Text>}</View>
-    <View style={styles.guideCard}><Text style={styles.guideCardEyebrow}>{tx(locale, "МАКИЯЖ · ПО ВОЗРАСТУ И ПОДАЧЕ", "MAKEUP · AGE & PRESENTATION AWARE")}</Text><Text style={styles.guideCardTitle}>{look.makeup.title}</Text><Text style={styles.guideCardBody}>{look.makeup.detail}</Text></View>
-    <View style={styles.guideCard}><Text style={styles.guideCardEyebrow}>{tx(locale, "СУМКА · УКРАШЕНИЯ · ГОЛОВНОЙ УБОР", "BAG · JEWELRY · HEADWEAR")}</Text><Text style={styles.guideCardTitle}>{details.length ? tx(locale, "Подобраны из твоего шкафа", "Picked from your closet") : tx(locale, "Оставляем образ чистым", "Keeping the look clean")}</Text><Text style={styles.guideCardBody}>{details.length ? details.map((item) => item.name).join(" · ") : tx(locale, "MIRA не добавляет аксессуар ради аксессуара — только если он поддерживает выбранный стиль.", "MIRA only adds an accessory when it genuinely supports the chosen style.")}</Text></View>
+    <View style={styles.visualGuideGrid}><View style={styles.visualGuideCard}><BeautyReference kind="hair" look={look} hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} recommendedColor={look.hair.recommendedColor} /><Text style={styles.visualGuideKicker}>{tx(locale, "УКЛАДКА", "HAIR")}</Text><Text numberOfLines={2} style={styles.visualGuideTitle}>{look.hair.title}</Text></View><View style={styles.visualGuideCard}><BeautyReference kind="makeup" look={look} hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} /><Text style={styles.visualGuideKicker}>{tx(locale, "МАКИЯЖ", "MAKEUP")}</Text><Text numberOfLines={2} style={styles.visualGuideTitle}>{look.makeup.title}</Text></View><View style={styles.visualGuideCard}><BeautyReference kind="accessories" look={look} hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} /><Text style={styles.visualGuideKicker}>{tx(locale, "АКСЕССУАРЫ", "ACCESSORIES")}</Text><Text numberOfLines={2} style={styles.visualGuideTitle}>{details.length ? details.map((item) => item.name).join(" · ") : tx(locale, "Без лишних деталей", "No extra details")}</Text></View></View>
+    {look.hair.colorFit === "optional_shift" && <View style={styles.visualColorNote}><View style={[styles.visualColorSwatch, { backgroundColor: HAIR_COLOR_OPTIONS.find((option) => option.id === look.hair.recommendedColor)?.color ?? colors.graphite }]} /><Text style={styles.visualColorNoteText}>{tx(locale, "Вариант цвета волос для этого стиля — только как референс", "Optional hair-color reference for this style")}</Text></View>}
   </View>;
 }
 
@@ -664,13 +680,14 @@ function Onboarding({ initial, firstRun, onDone, onClose }: { initial: ProfileSt
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.onboarding}>
       <View style={styles.onboardingTop}><Text style={styles.wordmark}>MIRA</Text>{!firstRun && <Pressable onPress={onClose} style={styles.closeButton}><X size={20} color={colors.graphite} /></Pressable>}</View>
       <ScrollView contentContainerStyle={styles.onboardingContent} keyboardShouldPersistTaps="handled">
-        <Text style={styles.onboardingStep}>0{step + 1} / 04</Text>
+        <Text style={styles.onboardingStep}>0{step + 1} / 05</Text>
         {step === 0 && <><Text style={styles.onboardingTitle}>Choose your language</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Все стили, подсказки и интерфейс будут на выбранном языке.", "Styles, guidance and the interface follow your language.")}</Text><View style={styles.languageCards}>{(["ru", "en"] as Locale[]).map((value) => <Pressable key={value} onPress={() => setDraft((current) => ({ ...current, locale: value }))} style={[styles.languageCard, draft.locale === value && styles.languageCardActive]}><Text style={styles.languageCode}>{value.toUpperCase()}</Text><Text style={styles.languageName}>{value === "ru" ? "Русский" : "English"}</Text>{draft.locale === value && <Check size={19} color={colors.ultraviolet} />}</Pressable>)}</View></>}
         {step === 1 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Профиль без лишних вопросов", "A profile without the friction")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Возраст меняет подсказки, приватность и доступ к social-функциям. Точная дата рождения не нужна.", "Age changes guidance, privacy and social access. We do not need your full birth date.")}</Text><View style={styles.agePicker}><Pressable disabled={!firstRun} onPress={() => setDraft((p) => ({ ...p, age: Math.max(0, p.age - 1) }))} style={[styles.ageButton, !firstRun && { opacity: 0.35 }]}><Minus size={20} color={colors.graphite} /></Pressable><View><Text style={styles.ageNumber}>{draft.age}</Text><Text style={styles.ageYears}>{tx(draft.locale, "лет", "years")}</Text></View><Pressable disabled={!firstRun} onPress={() => setDraft((p) => ({ ...p, age: Math.min(18, p.age + 1) }))} style={[styles.ageButton, !firstRun && { opacity: 0.35 }]}><Plus size={20} color={colors.graphite} /></Pressable></View><View style={styles.ageModeCard}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.ageModeText}>{draft.age < 10 ? tx(draft.locale, "Семейный режим без открытой соцсети", "Family mode without an open social feed") : draft.age < 13 ? tx(draft.locale, "Закрытый круг по invite-коду", "Private circle by invite only") : tx(draft.locale, "Social-режим, закрытый по умолчанию", "Social mode, private by default")}</Text></View><Text style={styles.inputLabel}>{tx(draft.locale, "КАК ТЕБЯ НАЗЫВАТЬ", "WHAT SHOULD WE CALL YOU")}</Text><TextInput value={draft.nickname} onChangeText={(nickname) => setDraft((p) => ({ ...p, nickname }))} style={styles.bigInput} maxLength={30} /><Text style={styles.inputLabel}>ID</Text><View style={styles.handleInput}><Text style={styles.handlePrefix}>@</Text><TextInput editable={firstRun} autoCapitalize="none" value={draft.handle} onChangeText={(handle) => setDraft((p) => ({ ...p, handle: handle.replace(/[^a-zA-Z0-9._]/g, "").toLowerCase() }))} style={[styles.handleTextInput, !firstRun && { opacity: 0.55 }]} maxLength={24} /></View></>}
         {step === 2 && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Настроим настроение", "Set the mood") : tx(draft.locale, "Стиль — это твой язык", "Style is your language")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Для маленьких детей стиль выбирает взрослый и может менять его в любой момент.", "A parent sets the direction for little ones and can change it anytime.") : tx(draft.locale, "Выбери до трёх направлений. MIRA научится смешивать их из твоих реальных вещей.", "Choose up to three directions. MIRA learns to mix them using your real clothes.")}</Text><View style={[styles.searchBar, { marginBottom: 12 }]}><Search size={17} color={colors.secondary} /><TextInput value={styleSearch} onChangeText={setStyleSearch} placeholder={tx(draft.locale, "Найти: emo, Stockholm, fairycore…", "Find: emo, Stockholm, fairycore…")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View><View style={styles.styleChoiceGrid}>{visibleCatalog.map((style) => { const selected = draft.styles.includes(style.id); return <Pressable key={style.id} onPress={() => toggleStyle(style.id)} style={[styles.styleChoice, selected && styles.styleChoiceActive]}><View style={styles.styleChoicePalette}>{style.palette.slice(0, 4).map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.styleChoiceName}>{style.name}</Text>{selected && <View style={styles.styleSelected}><Check size={12} color={colors.paper} /></View>}</Pressable>; })}</View></>}
         {step === 3 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Советы именно для тебя", "Guidance that fits you")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Пол и параметры волос нужны только для укладки и возрастных рекомендаций по макияжу. Они не показываются другим людям.", "Gender and hair details are only used for hairstyle and age-aware makeup guidance. They are never shown to other people.")}</Text><AppearanceCustomizer locale={draft.locale} gender={draft.genderPresentation} hair={draft.hairProfile} onGenderChange={(genderPresentation) => setDraft((current) => ({ ...current, genderPresentation }))} onHairChange={(hairProfile) => setDraft((current) => ({ ...current, hairProfile }))} /></>}
+        {step === 4 && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Школу настроим позже", "We’ll set up school later") : tx(draft.locale, "Как одеваются в школу?", "What is your school dress code?")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Этот вопрос появится, когда школьные образы станут актуальны.", "This choice will appear when school looks become relevant.") : tx(draft.locale, "MIRA не будет придумывать форму, если её нет. Выбери правило, которое действительно действует в твоей школе.", "MIRA will not invent a uniform when there isn’t one. Choose the rule your school actually uses.")}</Text><SchoolPreferences locale={draft.locale} age={draft.age} value={draft.schoolDressCode} onChange={(schoolDressCode) => setDraft((current) => ({ ...current, schoolDressCode }))} /></>}
       </ScrollView>
-      <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={step === 2 && !draft.styles.length} onPress={() => step < 3 ? setStep((value) => value + 1) : void onDone(draft)} style={styles.onboardingCta}><Text style={styles.onboardingCtaText}>{step === 3 ? tx(draft.locale, "Войти в MIRA", "Enter MIRA") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
+      <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={step === 2 && !draft.styles.length} onPress={() => step < 4 ? setStep((value) => value + 1) : void onDone(draft)} style={styles.onboardingCta}><Text style={styles.onboardingCtaText}>{step === 4 ? tx(draft.locale, "Войти в MIRA", "Enter MIRA") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
     </KeyboardAvoidingView>
   );
 }
@@ -685,6 +702,16 @@ function AppearanceCustomizer({ locale, gender, hair, onGenderChange, onHairChan
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appearanceRail}>{HAIR_COLOR_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onHairChange({ ...hair, color: option.id })} style={[styles.hairColorChoice, hair.color === option.id && styles.hairColorChoiceActive]}><View style={[styles.hairColorSwatch, { backgroundColor: option.color }]} /><Text style={styles.hairColorText}>{option.label[locale]}</Text>{hair.color === option.id && <Check size={12} color={colors.ultraviolet} />}</Pressable>)}</ScrollView>
     <View style={styles.appearancePrivacy}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.appearancePrivacyText}>{tx(locale, "MIRA может подсказать другой цвет волос для выбранного стиля, но это всегда необязательная идея — не требование.", "MIRA may suggest another hair color for a style, but it is always an optional idea, never a requirement.")}</Text></View>
   </View>;
+}
+
+function SchoolPreferences({ locale, age, value, onChange }: { locale: Locale; age: number; value: SchoolDressCode; onChange: (value: SchoolDressCode) => void }) {
+  if (age < 6) return <View style={styles.schoolLaterCard}><OccasionIllustration occasion="school" /><Text style={styles.schoolLaterText}>{tx(locale, "Пока MIRA будет собирать повседневные образы без школьных ограничений.", "For now, MIRA will create everyday looks without school restrictions.")}</Text></View>;
+  const options: Array<{ id: Exclude<SchoolDressCode, "NOT_APPLICABLE">; title: string; body: string }> = [
+    { id: "UNIFORM", title: tx(locale, "Есть школьная форма", "We have a uniform"), body: tx(locale, "Только вещи формы, которые ты сфотографируешь", "Only the uniform pieces you photograph") },
+    { id: "WHITE_TOP", title: tx(locale, "Нужен только белый верх", "Only a white top is required"), body: tx(locale, "Низ и обувь можно выбирать свободно", "Bottoms and shoes can follow your style") },
+    { id: "FREE_STYLE", title: tx(locale, "Можно одеваться как хочется", "We can wear what we want"), body: tx(locale, "Образ полностью следует выбранному стилю", "The whole look follows your selected style") },
+  ];
+  return <View style={styles.schoolCodeGrid}>{options.map((option) => { const selected = value === option.id; return <Pressable key={option.id} onPress={() => onChange(option.id)} style={[styles.schoolCodeCard, selected && styles.schoolCodeCardActive]}><View style={styles.schoolCodeArt}><SchoolDressCodeIllustration mode={option.id} active={selected} /></View><View style={{ flex: 1 }}><Text style={[styles.schoolCodeTitle, selected && styles.schoolCodeTitleActive]}>{option.title}</Text><Text style={[styles.schoolCodeBody, selected && styles.schoolCodeBodyActive]}>{option.body}</Text></View>{selected && <Check size={16} color={colors.paper} />}</Pressable>; })}</View>;
 }
 
 function ChatScreen({ locale, age, token, onClose }: { locale: Locale; age: number; token: string | undefined; onClose: () => void }) {
@@ -792,10 +819,9 @@ const styles = StyleSheet.create({
   totalLookLabel: { fontFamily: typography.bodySemibold, fontSize: 8, color: colors.ultraviolet, letterSpacing: 1.05 },
   freeBadge: { borderRadius: 10, backgroundColor: colors.mint, paddingHorizontal: 7, paddingVertical: 4 },
   freeBadgeText: { fontFamily: typography.bodySemibold, fontSize: 7, color: colors.success, letterSpacing: 0.5 },
-  totalLookChips: { flexDirection: "row", gap: 6 },
-  totalLookChip: { flex: 1, minWidth: 0, borderRadius: 12, backgroundColor: "#FFFFFFA8", padding: 8 },
-  totalLookChipLabel: { fontFamily: typography.bodySemibold, fontSize: 7.2, color: colors.secondary },
-  totalLookChipValue: { fontFamily: typography.bodySemibold, fontSize: 8.2, color: colors.graphite, marginTop: 3 },
+  visualSummaryRow: { flexDirection: "row", gap: 6 },
+  visualSummaryCard: { flex: 1, minWidth: 0, overflow: "hidden", borderRadius: 13, backgroundColor: "#FFFFFFB8", padding: 4, paddingBottom: 7 },
+  visualSummaryLabel: { fontFamily: typography.bodySemibold, fontSize: 7.5, color: colors.graphite, textAlign: "center", marginTop: 2 },
   heroActions: { flexDirection: "row", gap: 9, marginTop: 4 },
   secondaryAction: { flex: 1, minHeight: 48, borderRadius: 16, backgroundColor: colors.paper, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: colors.line },
   secondaryActionText: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
@@ -862,7 +888,6 @@ const styles = StyleSheet.create({
   occasionRail: { gap: 8, paddingBottom: 20 },
   occasionCard: { width: 91, height: 71, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
   occasionCardActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
-  occasionEmoji: { fontSize: 18, marginBottom: 5 },
   occasionLabel: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.secondary },
   occasionLabelActive: { color: colors.paper },
   createStyleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
@@ -871,11 +896,13 @@ const styles = StyleSheet.create({
   totalLookGuide: { borderRadius: 20, backgroundColor: "#FFFFFFD9", padding: 12, gap: 8 },
   totalLookGuideHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 2 },
   totalLookGuideTitle: { fontFamily: typography.displaySoft, fontSize: 11, color: colors.graphite, marginTop: 4 },
-  guideCard: { borderRadius: 14, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 10 },
-  guideCardEyebrow: { fontFamily: typography.bodySemibold, fontSize: 7.2, color: colors.ultraviolet, letterSpacing: 0.7 },
-  guideCardTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite, marginTop: 5 },
-  guideCardBody: { fontFamily: typography.body, fontSize: 9, lineHeight: 13.5, color: colors.secondary, marginTop: 3 },
-  colorAdvice: { fontFamily: typography.bodyMedium, fontSize: 8.5, lineHeight: 13, color: colors.ultraviolet, backgroundColor: colors.violetMist, borderRadius: 10, padding: 7, marginTop: 7 },
+  visualGuideGrid: { flexDirection: "row", gap: 7 },
+  visualGuideCard: { flex: 1, minWidth: 0, borderRadius: 15, backgroundColor: colors.paper, borderWidth: 1, borderColor: "#E7E2EC", overflow: "hidden", padding: 4, paddingBottom: 9 },
+  visualGuideKicker: { fontFamily: typography.bodySemibold, fontSize: 6.5, color: colors.ultraviolet, letterSpacing: 0.75, paddingHorizontal: 5, marginTop: 3 },
+  visualGuideTitle: { minHeight: 25, fontFamily: typography.bodySemibold, fontSize: 8.2, lineHeight: 11.5, color: colors.graphite, paddingHorizontal: 5, marginTop: 3 },
+  visualColorNote: { minHeight: 34, borderRadius: 12, backgroundColor: colors.violetMist, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 9 },
+  visualColorSwatch: { width: 18, height: 18, borderRadius: 7, borderWidth: 1, borderColor: "#00000016" },
+  visualColorNoteText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 7.8, lineHeight: 11.5, color: colors.ultraviolet },
   lookDots: { flexDirection: "row", justifyContent: "center", gap: 6, paddingVertical: 13 },
   lookDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#CBC6D1" },
   lookDotActive: { width: 22, backgroundColor: colors.ultraviolet },
@@ -995,6 +1022,16 @@ const styles = StyleSheet.create({
   hairColorText: { flex: 1, fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.graphite },
   appearancePrivacy: { flexDirection: "row", gap: 9, borderRadius: 16, backgroundColor: colors.violetMist, padding: 12, marginTop: 17 },
   appearancePrivacyText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 14.5, color: colors.graphite },
+  schoolLaterCard: { minHeight: 114, borderRadius: 22, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", padding: 22 },
+  schoolLaterText: { fontFamily: typography.bodySemibold, fontSize: 12, lineHeight: 18, color: colors.secondary, textAlign: "center", marginTop: 10 },
+  schoolCodeGrid: { gap: 10 },
+  schoolCodeCard: { minHeight: 98, borderRadius: 20, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 9 },
+  schoolCodeCardActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
+  schoolCodeArt: { width: 82, height: 74, borderRadius: 16, overflow: "hidden" },
+  schoolCodeTitle: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.graphite },
+  schoolCodeTitleActive: { color: colors.paper },
+  schoolCodeBody: { fontFamily: typography.body, fontSize: 8.8, lineHeight: 13, color: colors.secondary, marginTop: 4 },
+  schoolCodeBodyActive: { color: "#CEC6DA" },
   onboardingFooter: { minHeight: 76, paddingHorizontal: 18, paddingBottom: 10, flexDirection: "row", alignItems: "center", gap: 9, borderTopWidth: 1, borderTopColor: colors.line },
   backRound: { width: 49, height: 49, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
   onboardingCta: { flex: 1, height: 51, borderRadius: 17, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.graphite },

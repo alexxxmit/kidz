@@ -24,6 +24,9 @@ export const GenderPresentationSchema = z.enum([
 ]);
 export type GenderPresentation = z.infer<typeof GenderPresentationSchema>;
 
+export const SchoolDressCodeSchema = z.enum(["NOT_APPLICABLE", "UNIFORM", "WHITE_TOP", "FREE_STYLE"]);
+export type SchoolDressCode = z.infer<typeof SchoolDressCodeSchema>;
+
 export const HairLengthSchema = z.enum([
   "BUZZ",
   "SHORT",
@@ -62,6 +65,7 @@ export const ProfileInputSchema = z.object({
   autonomyMode: AutonomyModeSchema,
   genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
   hairProfile: HairProfileSchema.default(DEFAULT_HAIR_PROFILE),
+  schoolDressCode: SchoolDressCodeSchema.default("FREE_STYLE"),
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
 });
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
@@ -158,6 +162,8 @@ export type OutfitRequest = z.infer<typeof OutfitRequestSchema>;
 
 export type ScoreBreakdown = {
   style: number;
+  presentation: number;
+  dressCode: number;
   weather: number;
   completeness: number;
   rotation: number;
@@ -168,6 +174,7 @@ export type HairSuggestion = {
   title: string;
   detail: string;
   colorAdvice?: string;
+  recommendedColor: HairColor;
   colorFit: "already_fits" | "optional_shift" | "not_applicable";
   reasonCodes: string[];
 };
@@ -234,6 +241,7 @@ export const AccountInputSchema = z.object({
   avatarUri: z.string().url().max(1024).optional(),
   genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
   hairProfile: HairProfileSchema.default(DEFAULT_HAIR_PROFILE),
+  schoolDressCode: SchoolDressCodeSchema.default("FREE_STYLE"),
   privacyState: PrivacyStateSchema.optional(),
 });
 export type AccountInput = z.infer<typeof AccountInputSchema>;
@@ -244,6 +252,7 @@ export const AccountPatchInputSchema = z.object({
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3).optional(),
   genderPresentation: GenderPresentationSchema.optional(),
   hairProfile: HairProfileSchema.optional(),
+  schoolDressCode: SchoolDressCodeSchema.optional(),
   privacyState: PrivacyStateSchema.optional(),
 });
 export type AccountPatchInput = z.infer<typeof AccountPatchInputSchema>;
@@ -331,6 +340,26 @@ export type AiStylistResponse = {
   safetyMode: "UNDER_13_LOCAL" | "TEEN_GUARDED" | "STANDARD";
   provider: "openai" | "local";
 };
+
+export const WardrobeVisionInputSchema = z.object({
+  ageYears: z.number().int().min(0).max(18),
+  locale: LocaleSchema,
+  imageDataUrl: z.string().startsWith("data:image/").max(12_000_000),
+  selectedStyleIds: z.array(z.string().min(1)).min(1).max(3),
+});
+export type WardrobeVisionInput = z.infer<typeof WardrobeVisionInputSchema>;
+
+export const WardrobeVisionResultSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  category: GarmentCategorySchema,
+  slot: GarmentSlotSchema,
+  colors: z.array(z.string().regex(/^#[0-9A-F]{6}$/i)).min(1).max(4),
+  warmth: z.number().int().min(0).max(4),
+  styleIds: z.array(z.string().min(1)).max(8),
+  confidence: z.number().min(0).max(1),
+  provider: z.enum(["openai", "local"]),
+});
+export type WardrobeVisionResult = z.infer<typeof WardrobeVisionResultSchema>;
 
 export type ApiError = {
   code: string;

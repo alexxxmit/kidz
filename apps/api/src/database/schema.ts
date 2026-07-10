@@ -44,6 +44,7 @@ export const socialAccounts = pgTable(
     avatarUri: varchar("avatar_uri", { length: 1024 }),
     genderPresentation: varchar("gender_presentation", { length: 24 }).notNull().default("NOT_SPECIFIED"),
     hairProfile: jsonb("hair_profile").notNull().default({ length: "MEDIUM", color: "DARK_BROWN", openToColorAdvice: true }),
+    schoolDressCode: varchar("school_dress_code", { length: 24 }).notNull().default("FREE_STYLE"),
     styleMix: jsonb("style_mix").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -62,6 +63,7 @@ export const profiles = pgTable("profiles", {
   autonomyMode: varchar("autonomy_mode", { length: 24 }).notNull(),
   genderPresentation: varchar("gender_presentation", { length: 24 }).notNull().default("NOT_SPECIFIED"),
   hairProfile: jsonb("hair_profile").notNull().default({ length: "MEDIUM", color: "DARK_BROWN", openToColorAdvice: true }),
+  schoolDressCode: varchar("school_dress_code", { length: 24 }).notNull().default("FREE_STYLE"),
   styleMix: jsonb("style_mix").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

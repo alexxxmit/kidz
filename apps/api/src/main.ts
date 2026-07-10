@@ -9,7 +9,7 @@ import { AppModule } from "./app.module.js";
 const bootstrap = async () => {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true }),
+    new FastifyAdapter({ trustProxy: true, bodyLimit: 15 * 1024 * 1024 }),
     { bufferLogs: true },
   );
   app.useLogger(new Logger("KidzApi"));

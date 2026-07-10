@@ -10,6 +10,8 @@ import type {
   OutfitOption,
   ProfileInput,
   WardrobeItemInput,
+  WardrobeVisionInput,
+  WardrobeVisionResult,
   WeatherContext,
 } from "@kidz/contracts";
 
@@ -103,6 +105,9 @@ export const cutoutWardrobePhoto = async (imageBase64: string) => {
   const result = await response.json() as { image_base64: string; mime_type: "image/png" };
   return `data:${result.mime_type};base64,${result.image_base64}`;
 };
+
+export const analyzeWardrobePhoto = (accessToken: string, input: WardrobeVisionInput) =>
+  request<WardrobeVisionResult>("/v1/ai/wardrobe-vision", { method: "POST", body: JSON.stringify(input) }, accessToken);
 
 export const persistAndGenerate = async (
   profile: ProfileInput,

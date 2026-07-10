@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Headers, Post } from "@nestjs/common";
-import { AiStylistInputSchema } from "@kidz/contracts";
+import { AiStylistInputSchema, WardrobeVisionInputSchema } from "@kidz/contracts";
 
 import { AuthService } from "../auth/auth.service.js";
 import { AiService } from "./ai.service.js";
@@ -15,5 +15,14 @@ export class AiController {
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     if (parsed.data.ageYears !== context.ageYears) throw new BadRequestException("Age context mismatch");
     return this.ai.stylist(parsed.data);
+  }
+
+  @Post("wardrobe-vision")
+  async wardrobeVision(@Headers("authorization") authorization: string | undefined, @Body() body: unknown) {
+    const context = await this.auth.require(authorization);
+    const parsed = WardrobeVisionInputSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    if (parsed.data.ageYears !== context.ageYears) throw new BadRequestException("Age context mismatch");
+    return this.ai.analyzeWardrobe(parsed.data);
   }
 }

@@ -14,12 +14,14 @@ describe("appearance profile contracts", () => {
 
     expect(account.genderPresentation).toBe("NOT_SPECIFIED");
     expect(account.hairProfile).toEqual(DEFAULT_HAIR_PROFILE);
+    expect(account.schoolDressCode).toBe("FREE_STYLE");
   });
 
   it("validates gender and hair updates", () => {
     const update = AccountPatchInputSchema.parse({
       genderPresentation: "FEMININE",
       hairProfile: { length: "LONG", color: "BLACK", openToColorAdvice: true },
+      schoolDressCode: "UNIFORM",
     });
 
     expect(update.hairProfile?.length).toBe("LONG");

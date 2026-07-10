@@ -1084,6 +1084,7 @@ export const buildStylingGuidance = (
     title: locale === "ru" ? `Причёска · ${styleTitle}` : `Hair · ${styleTitle}`,
     detail: hairText(config, profile.hairProfile.length, profile.genderPresentation, locale),
     ...(colorAdvice ? { colorAdvice } : {}),
+    recommendedColor: colorMatches || !colorAdviceAllowed ? currentColor : (preferredColors[0] ?? currentColor),
     colorFit: !colorAdviceAllowed ? "not_applicable" : colorMatches ? "already_fits" : "optional_shift",
     reasonCodes: ["HAIR_DIRECTION", colorMatches ? "HAIR_COLOR_FITS" : "HAIR_COLOR_OPTION"],
   };
