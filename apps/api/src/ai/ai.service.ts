@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import type { AiStylistInput, AiStylistResponse } from "@kidz/contracts";
 
+import { ModerationService } from "../safety/moderation.service.js";
+
 const localAnswer = (input: AiStylistInput): AiStylistResponse => {
   const styles = input.styleMix.map((item) => item.styleId).join(" + ");
   const count = input.wardrobeSummary.length;
@@ -17,10 +19,29 @@ const localAnswer = (input: AiStylistInput): AiStylistResponse => {
 
 @Injectable()
 export class AiService {
+  constructor(private readonly moderation: ModerationService) {}
+
   async stylist(input: AiStylistInput): Promise<AiStylistResponse> {
+    const moderation = await this.moderation.checkText(input.question, { blockContactSharing: input.ageYears < 16 });
+    if (!moderation.allowed) {
+      const urgent = moderation.reason === "HIGH_RISK_ESCALATION";
+      const ru = input.locale === "ru";
+      return {
+        answer: urgent
+          ? ru
+            ? "Мне очень жаль, что тебе сейчас тяжело. Пожалуйста, прямо сейчас расскажи взрослому, которому доверяешь, и не оставайся с этим в одиночку. Если есть непосредственная опасность — обратись в местную экстренную службу."
+            : "I’m really sorry this feels so hard. Please tell a trusted adult right now and do not stay alone with it. If there is immediate danger, contact your local emergency service."
+          : ru
+            ? "Я могу помочь со стилем и образом, но не с этим запросом. Давай соберём безопасный вариант из твоего гардероба."
+            : "I can help with style and outfits, but not with that request. Let’s build a safe option from your closet.",
+        quickActions: ru ? ["Образ для школы", "Спокойный вариант"] : ["School outfit", "Calmer option"],
+        safetyMode: input.ageYears < 13 ? "UNDER_13_LOCAL" : "TEEN_GUARDED",
+        provider: "local",
+      };
+    }
     const key = process.env.OPENAI_API_KEY;
     const under13Allowed = process.env.OPENAI_ZERO_DATA_RETENTION === "true";
-    if (!key || (input.ageYears < 13 && !under13Allowed)) return localAnswer(input);
+    if (!key || moderation.state === "PENDING" || (input.ageYears < 13 && !under13Allowed)) return localAnswer(input);
 
     const language = input.locale === "ru" ? "Russian" : "English";
     const wardrobe = input.wardrobeSummary.slice(0, 80).join(", ");
@@ -42,7 +63,6 @@ export class AiService {
           instructions,
           input: input.question,
           max_output_tokens: 280,
-          moderation: { model: "omni-moderation-latest" },
         }),
         signal: AbortSignal.timeout(20_000),
       });
