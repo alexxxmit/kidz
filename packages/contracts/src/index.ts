@@ -53,18 +53,7 @@ export const HairProfileSchema = z.object({
   openToColorAdvice: z.boolean().default(true),
 });
 export type HairProfile = z.infer<typeof HairProfileSchema>;
-
-export const AvatarSkinToneSchema = z.enum(["PORCELAIN", "LIGHT", "WARM", "TAN", "DEEP", "RICH"]);
-export const AvatarHairStyleSchema = z.enum(["BUZZ", "CROP", "BOB", "WAVES", "CURLS", "PONYTAIL", "BRAIDS", "LONG_STRAIGHT"]);
-export const AvatarPoseSchema = z.enum(["EDITORIAL", "MIRROR", "WALK"]);
-export const DEFAULT_AVATAR_PROFILE = { skinTone: "WARM", hairColor: "DARK_BROWN", hairStyle: "LONG_STRAIGHT", pose: "EDITORIAL" } as const;
-export const AvatarProfileSchema = z.object({
-  skinTone: AvatarSkinToneSchema.default("WARM"),
-  hairColor: HairColorSchema.default("DARK_BROWN"),
-  hairStyle: AvatarHairStyleSchema.default("LONG_STRAIGHT"),
-  pose: AvatarPoseSchema.default("EDITORIAL"),
-});
-export type AvatarProfile = z.infer<typeof AvatarProfileSchema>;
+export const DEFAULT_HAIR_PROFILE = { length: "MEDIUM", color: "DARK_BROWN", openToColorAdvice: true } as const;
 
 export const ProfileInputSchema = z.object({
   displayName: z.string().trim().min(1).max(40).default("Мой профиль"),
@@ -72,11 +61,7 @@ export const ProfileInputSchema = z.object({
   ageYears: z.number().int().min(0).max(18),
   autonomyMode: AutonomyModeSchema,
   genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
-  hairProfile: HairProfileSchema.default({
-    length: "MEDIUM",
-    color: "DARK_BROWN",
-    openToColorAdvice: true,
-  }),
+  hairProfile: HairProfileSchema.default(DEFAULT_HAIR_PROFILE),
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
 });
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
@@ -247,7 +232,8 @@ export const AccountInputSchema = z.object({
   locale: LocaleSchema,
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
   avatarUri: z.string().url().max(1024).optional(),
-  avatarProfile: AvatarProfileSchema.default(DEFAULT_AVATAR_PROFILE),
+  genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
+  hairProfile: HairProfileSchema.default(DEFAULT_HAIR_PROFILE),
   privacyState: PrivacyStateSchema.optional(),
 });
 export type AccountInput = z.infer<typeof AccountInputSchema>;
@@ -256,7 +242,8 @@ export const AccountPatchInputSchema = z.object({
   nickname: z.string().trim().min(2).max(30).optional(),
   locale: LocaleSchema.optional(),
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3).optional(),
-  avatarProfile: AvatarProfileSchema.optional(),
+  genderPresentation: GenderPresentationSchema.optional(),
+  hairProfile: HairProfileSchema.optional(),
   privacyState: PrivacyStateSchema.optional(),
 });
 export type AccountPatchInput = z.infer<typeof AccountPatchInputSchema>;
@@ -297,7 +284,7 @@ export type LookPostInput = z.infer<typeof LookPostInputSchema>;
 
 export type LookPost = LookPostInput & {
   id: string;
-  author: Pick<SocialAccount, "id" | "nickname" | "handle" | "avatarUri" | "avatarProfile" | "styleMix">;
+  author: Pick<SocialAccount, "id" | "nickname" | "handle" | "avatarUri" | "styleMix">;
   reactionCount: number;
   commentCount: number;
   remixCount: number;

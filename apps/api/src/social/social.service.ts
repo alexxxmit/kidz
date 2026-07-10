@@ -34,7 +34,8 @@ export class SocialService {
     if (input.nickname !== undefined) changes.nickname = input.nickname;
     if (input.locale !== undefined) changes.locale = input.locale;
     if (input.styleMix !== undefined) changes.styleMix = input.styleMix;
-    if (input.avatarProfile !== undefined) changes.avatarProfile = input.avatarProfile;
+    if (input.genderPresentation !== undefined) changes.genderPresentation = input.genderPresentation;
+    if (input.hairProfile !== undefined) changes.hairProfile = input.hairProfile;
     if (input.privacyState !== undefined) changes.privacyState = context.ageYears < 13 && input.privacyState === "PUBLIC" ? "CIRCLE" : input.privacyState;
     if (Object.keys(changes).length) await this.database.db.update(socialAccounts).set(changes).where(eq(socialAccounts.id, context.accountId));
     return this.me(context);
@@ -98,7 +99,6 @@ export class SocialService {
         nickname: socialAccounts.nickname,
         handle: socialAccounts.handle,
         avatarUri: socialAccounts.avatarUri,
-        avatarProfile: socialAccounts.avatarProfile,
         styleMix: socialAccounts.styleMix,
         reactionCount: sql<number>`(select count(*)::int from look_reactions r where r.post_id = ${lookPosts.id})`,
         commentCount: sql<number>`(select count(*)::int from look_comments c where c.post_id = ${lookPosts.id} and c.moderation_state <> 'HIDDEN')`,
@@ -119,7 +119,7 @@ export class SocialService {
         visibility: row.visibility,
         ...(row.challengeId ? { challengeId: row.challengeId } : {}),
         ...(row.remixOfPostId ? { remixOfPostId: row.remixOfPostId } : {}),
-        author: { id: row.authorId, nickname: row.nickname, handle: row.handle, avatarUri: row.avatarUri ?? undefined, avatarProfile: row.avatarProfile, styleMix: row.styleMix },
+        author: { id: row.authorId, nickname: row.nickname, handle: row.handle, avatarUri: row.avatarUri ?? undefined, styleMix: row.styleMix },
         reactionCount: row.reactionCount,
         commentCount: row.commentCount,
         remixCount: row.remixCount,
@@ -150,7 +150,7 @@ export class SocialService {
 
   async followRequests(context: AuthContext) {
     const rows = await this.database.db
-      .select({ id: socialAccounts.id, nickname: socialAccounts.nickname, handle: socialAccounts.handle, avatarUri: socialAccounts.avatarUri, avatarProfile: socialAccounts.avatarProfile, styleMix: socialAccounts.styleMix })
+      .select({ id: socialAccounts.id, nickname: socialAccounts.nickname, handle: socialAccounts.handle, avatarUri: socialAccounts.avatarUri, styleMix: socialAccounts.styleMix })
       .from(follows)
       .innerJoin(socialAccounts, eq(socialAccounts.id, follows.followerAccountId))
       .where(and(eq(follows.targetAccountId, context.accountId), eq(follows.status, "REQUESTED")))
@@ -214,7 +214,6 @@ export class SocialService {
           nickname: socialAccounts.nickname,
           handle: socialAccounts.handle,
           avatarUri: socialAccounts.avatarUri,
-          avatarProfile: socialAccounts.avatarProfile,
           styleMix: socialAccounts.styleMix,
         })
         .from(conversationMembers)
@@ -288,10 +287,10 @@ export class SocialService {
   }
 
   private publicAccount(row: typeof socialAccounts.$inferSelect) {
-    return { id: row.id, nickname: row.nickname, handle: row.handle, avatarUri: row.avatarUri, avatarProfile: row.avatarProfile, styleMix: row.styleMix, privacyState: row.privacyState };
+    return { id: row.id, nickname: row.nickname, handle: row.handle, avatarUri: row.avatarUri, styleMix: row.styleMix, privacyState: row.privacyState };
   }
 
   private withCounts(row: typeof socialAccounts.$inferSelect) {
-    return { ...this.publicAccount(row), locale: row.locale, ageYears: row.ageYears, ageMode: row.ageMode, followersCount: 0, followingCount: 0, looksCount: 0, createdAt: row.createdAt.toISOString() };
+    return { ...this.publicAccount(row), locale: row.locale, ageYears: row.ageYears, ageMode: row.ageMode, genderPresentation: row.genderPresentation, hairProfile: row.hairProfile, followersCount: 0, followingCount: 0, looksCount: 0, createdAt: row.createdAt.toISOString() };
   }
 }

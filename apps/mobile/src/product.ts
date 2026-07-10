@@ -1,4 +1,4 @@
-import type { AvatarProfile, Locale, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
+import type { Locale, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
 import { generateOutfits } from "@kidz/domain";
 
 import { STARTER_WARDROBE } from "./demo";
@@ -8,7 +8,6 @@ export type FeedPost = {
   nickname: string;
   handle: string;
   avatarColor: string;
-  avatarProfile: AvatarProfile;
   time: string;
   caption: Record<Locale, string>;
   style: string;
@@ -50,8 +49,8 @@ export const CHALLENGES = [
 ];
 
 export const PLUS_FEATURES = {
-  ru: ["Безлимитный AI-стилист", "Виртуальные примерки", "Умный wishlist и разбор покупок", "Расширенная аналитика гардероба"],
-  en: ["Unlimited AI stylist", "Virtual try-ons", "Smart wishlist and purchase check", "Advanced closet insights"],
+  ru: ["Безлимитные диалоги с AI-стилистом", "Капсулы и планирование сезона", "Умный wishlist и разбор покупок", "Расширенная аналитика гардероба"],
+  en: ["Unlimited AI stylist chats", "Capsules and seasonal planning", "Smart wishlist and purchase check", "Advanced closet insights"],
 };
 
 export const wardrobePreview = STARTER_WARDROBE.map((item, index) => ({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { generateOutfits } from "./recommendation.js";
+import { buildStylingGuidance } from "./styling.js";
 
 describe("generateOutfits", () => {
   it("never recommends laundry or outgrown items", () => {
@@ -59,5 +60,25 @@ describe("generateOutfits", () => {
       "bag",
       "headwear",
     ]);
+  });
+
+  it("changes hairstyle guidance with gender presentation while respecting hair length", () => {
+    const profile = {
+      displayName: "Alex",
+      locale: "ru" as const,
+      ageYears: 15,
+      autonomyMode: "USER_DECIDES" as const,
+      hairProfile: { length: "SHORT" as const, color: "BLACK" as const, openToColorAdvice: true },
+      styleMix: [{ styleId: "emo", weight: 1 }],
+    };
+    const items = [
+      { name: "Чёрная футболка", category: "tshirt" as const, slot: "top" as const, colors: ["#111"], warmth: 1, styleIds: ["emo"], careState: "CLEAN" as const, fitState: "FITS" as const },
+    ];
+    const feminine = buildStylingGuidance({ ...profile, genderPresentation: "FEMININE" }, items);
+    const masculine = buildStylingGuidance({ ...profile, genderPresentation: "MASCULINE" }, items);
+
+    expect(feminine.hair.detail).toContain("женственной");
+    expect(masculine.hair.detail).toContain("мужской");
+    expect(feminine.hair.detail).not.toBe(masculine.hair.detail);
   });
 });

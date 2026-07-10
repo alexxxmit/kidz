@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { AvatarProfile, DirectMessage, Locale, LookPost, OutfitOption } from "@kidz/contracts";
+import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system/legacy";
@@ -71,14 +71,7 @@ import {
   type FollowRequest,
   type SocialSearchAccount,
 } from "../src/api";
-import {
-  AVATAR_HAIR_COLORS,
-  AVATAR_HAIR_STYLES,
-  AVATAR_POSES,
-  AVATAR_SKIN_OPTIONS,
-  DEFAULT_AVATAR_PROFILE,
-  FashionAvatar,
-} from "../src/avatar";
+import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS } from "../src/appearance";
 import { STARTER_WARDROBE } from "../src/demo";
 import { CHALLENGES, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
@@ -91,13 +84,14 @@ type ProfileState = {
   nickname: string;
   handle: string;
   styles: string[];
-  avatarProfile: AvatarProfile;
+  genderPresentation: GenderPresentation;
+  hairProfile: HairProfile;
 };
 
 const PROFILE_KEY = "mira.profile.v2";
 const TOKEN_KEY = "mira.session.v1";
 const WARDROBE_KEY = "mira.wardrobe.v1";
-const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm", "emo"], avatarProfile: DEFAULT_AVATAR_PROFILE };
+const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm", "emo"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
 const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
@@ -108,7 +102,6 @@ const livePost = (post: LookPost, myHandle: string): FeedPost => ({
   nickname: post.author.nickname,
   handle: displayHandle(post.author.handle),
   avatarColor: avatarColors[post.author.handle.length % avatarColors.length]!,
-  avatarProfile: post.author.avatarProfile ?? DEFAULT_AVATAR_PROFILE,
   time: new Date(post.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
   caption: { ru: post.caption, en: post.caption },
   style: post.styleTags.join(" + ") || "remix",
@@ -177,7 +170,8 @@ export default function MiraApp() {
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
-          setProfile({ ...defaultProfile, ...parsed, avatarProfile: parsed.avatarProfile ?? DEFAULT_AVATAR_PROFILE });
+          setProfile({ ...defaultProfile, ...parsed, genderPresentation: parsed.genderPresentation ?? defaultProfile.genderPresentation, hairProfile: { ...DEFAULT_HAIR_PROFILE, ...parsed.hairProfile } });
+          if (!parsed.genderPresentation || !parsed.hairProfile) setOverlay("onboarding");
         } catch { setOverlay("onboarding"); }
       } else {
         setOverlay("onboarding");
@@ -230,7 +224,8 @@ export default function MiraApp() {
         nickname: next.nickname,
         locale: next.locale,
         styleMix: next.styles.map((styleId) => ({ styleId, weight: 1 / next.styles.length })),
-        avatarProfile: next.avatarProfile,
+        genderPresentation: next.genderPresentation,
+        hairProfile: next.hairProfile,
       }).catch(() => undefined);
       generateFor(next, occasion);
       return;
@@ -244,7 +239,8 @@ export default function MiraApp() {
         ageYears: next.age,
         locale: next.locale,
         styleMix: next.styles.map((styleId) => ({ styleId, weight: 1 / next.styles.length })),
-        avatarProfile: next.avatarProfile,
+        genderPresentation: next.genderPresentation,
+        hairProfile: next.hairProfile,
       });
       setToken(session.accessToken);
       await storage.setToken(session.accessToken);
@@ -266,12 +262,8 @@ export default function MiraApp() {
         locale: target.locale,
         ageYears: target.age,
         autonomyMode: target.age <= 5 ? "PARENT_DECIDES" : target.age <= 9 ? "TOGETHER" : "USER_DECIDES",
-        genderPresentation: "FEMININE",
-        hairProfile: {
-          length: ["BUZZ", "CROP"].includes(target.avatarProfile.hairStyle) ? "SHORT" : ["BOB", "CURLS"].includes(target.avatarProfile.hairStyle) ? "MEDIUM" : "LONG",
-          color: target.avatarProfile.hairColor,
-          openToColorAdvice: true,
-        },
+        genderPresentation: target.genderPresentation,
+        hairProfile: target.hairProfile,
         styleMix: target.styles.map((styleId) => ({ styleId, weight: 1 / target.styles.length })),
       },
       wardrobe: wardrobe.map(({ localId: _id, ...item }) => item),
@@ -280,6 +272,11 @@ export default function MiraApp() {
     setGenerated(options);
     setActiveLook(0);
   };
+
+  useEffect(() => {
+    if (!hydrated) return;
+    generateFor(profile, occasion);
+  }, [hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.locale, profile.styles, wardrobe]);
 
   const askMira = async (question = aiQuestion) => {
     const normalized = question.trim();
@@ -343,7 +340,6 @@ export default function MiraApp() {
       nickname: profile.nickname,
       handle: displayHandle(profile.handle),
       avatarColor: colors.ultraviolet,
-      avatarProfile: profile.avatarProfile,
       time: tx(locale, "сейчас", "now"),
       caption: { ru: "мой сегодняшний remix ✦", en: "today's remix ✦" },
       style: selectedNames.join(" + "),
@@ -405,7 +401,6 @@ export default function MiraApp() {
                 mode={mode}
                 styleNames={selectedNames}
                 look={currentLook}
-                avatar={profile.avatarProfile}
                 aiQuestion={aiQuestion}
                 aiAnswer={aiAnswer}
                 aiLoading={aiLoading}
@@ -435,7 +430,6 @@ export default function MiraApp() {
                 occasion={occasion}
                 setOccasion={(value) => { setOccasion(value); generateFor(profile, value); }}
                 outfits={generated}
-                avatar={profile.avatarProfile}
                 activeLook={activeLook}
                 setActiveLook={setActiveLook}
                 regenerate={() => generateFor()}
@@ -484,10 +478,9 @@ function AppHeader({ locale, profile, socialEnabled, onChat, onPlus }: { locale:
   );
 }
 
-function TodayScreen({ locale, profile, mode, styleNames, look, avatar, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onCreate, onPublish }: {
-  locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; look: OutfitOption | undefined; avatar: AvatarProfile; aiQuestion: string; aiAnswer: string | undefined; aiLoading: boolean; setAiQuestion: (v: string) => void; askMira: (q?: string) => void; onCreate: () => void; onPublish: () => void;
+function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onCreate, onPublish }: {
+  locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; look: OutfitOption | undefined; aiQuestion: string; aiAnswer: string | undefined; aiLoading: boolean; setAiQuestion: (v: string) => void; askMira: (q?: string) => void; onCreate: () => void; onPublish: () => void;
 }) {
-  const [avatarMode, setAvatarMode] = useState(true);
   return (
     <View>
       <View style={styles.greetingRow}>
@@ -504,8 +497,8 @@ function TodayScreen({ locale, profile, mode, styleNames, look, avatar, aiQuesti
         <View style={styles.heroLookCard}>
           <LinearGradient colors={["#ECE8FF", "#F7E9F0", "#E7F5F5"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
           <View style={styles.heroLookTop}><View><Text style={styles.miniLabel}>{tx(locale, "MIRA ПОДОБРАЛА", "MIRA PICKED")}</Text><Text style={styles.lookMood}>{styleNames[0] ?? "your style"}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>{Math.round(look.score * 100)}%</Text></View></View>
-          <View style={styles.displaySwitch}><Pressable onPress={() => setAvatarMode(true)} style={[styles.displaySwitchOption, avatarMode && styles.displaySwitchOptionActive]}><Text style={[styles.displaySwitchText, avatarMode && styles.displaySwitchTextActive]}>{tx(locale, "На аватаре", "On avatar")}</Text></Pressable><Pressable onPress={() => setAvatarMode(false)} style={[styles.displaySwitchOption, !avatarMode && styles.displaySwitchOptionActive]}><Text style={[styles.displaySwitchText, !avatarMode && styles.displaySwitchTextActive]}>{tx(locale, "Вещи", "Pieces")}</Text></Pressable></View>
-          {avatarMode ? <FashionAvatar avatar={avatar} look={look} height={306} /> : <OutfitCanvas look={look} large />}
+          <OutfitCanvas look={look} large />
+          <TotalLookSummary locale={locale} look={look} />
           <View style={styles.heroActions}>
             <Pressable onPress={onCreate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Изменить", "Remix")}</Text></Pressable>
             <Pressable onPress={onPublish} style={styles.primaryAction}><Text style={styles.primaryActionText}>{tx(locale, "Это мой лук", "Wear this")}</Text><ChevronRight size={17} color={colors.paper} /></Pressable>
@@ -567,16 +560,15 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   return (
     <View style={styles.postCard}>
       <View style={styles.postHeader}><View style={[styles.avatar, { backgroundColor: post.avatarColor }]}><Text style={styles.avatarLetter}>{post.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{post.nickname} <Text style={styles.postHandle}>{post.handle}</Text></Text><Text style={styles.postTime}>{post.time} · {post.style}</Text></View><MoreHorizontal size={20} color={colors.secondary} /></View>
-      <View style={styles.postCanvas}><LinearGradient colors={["#F0ECFF", "#F9EDF0"]} style={StyleSheet.absoluteFill} /><FashionAvatar avatar={post.avatarProfile} look={post.outfit} height={285} /></View>
+      <View style={styles.postCanvas}><LinearGradient colors={["#F0ECFF", "#F9EDF0"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={post.outfit} /></View>
       <Text style={styles.postCaption}>{post.caption[locale]}</Text>
       <View style={styles.postActions}><Pressable onPress={onReact} style={styles.socialAction}><Heart size={20} color={post.reacted ? colors.coral : colors.graphite} fill={post.reacted ? colors.coral : "transparent"} /><Text style={styles.socialCount}>{post.reactions}</Text></Pressable><View style={styles.socialAction}><MessageCircle size={19} color={colors.graphite} /><Text style={styles.socialCount}>{post.comments}</Text></View><Pressable onPress={onRemix} style={styles.remixButton}><Shuffle size={15} color={colors.ultraviolet} /><Text style={styles.remixText}>{tx(locale, "Ремикс", "Remix")} · {post.remixes}</Text></Pressable></View>
     </View>
   );
 }
 
-function CreateScreen({ locale, styleNames, occasion, setOccasion, outfits, avatar, activeLook, setActiveLook, regenerate, publish }: { locale: Locale; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; avatar: AvatarProfile; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void }) {
+function CreateScreen({ locale, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish }: { locale: Locale; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void }) {
   const look = outfits[activeLook];
-  const [avatarMode, setAvatarMode] = useState(true);
   return (
     <View>
       <Text style={styles.eyebrow}>{tx(locale, "AI LOOK LAB", "AI LOOK LAB")}</Text><Text style={styles.screenTitle}>{tx(locale, "Собери настроение", "Build a mood")}</Text><Text style={styles.lead}>{tx(locale, "MIRA использует только вещи из твоего шкафа. Ты решаешь, что оставить.", "MIRA uses only your real closet. You decide what stays.")}</Text>
@@ -585,7 +577,7 @@ function CreateScreen({ locale, styleNames, occasion, setOccasion, outfits, avat
         {[["school", "🎒", tx(locale, "Школа", "School")], ["walk", "☕", tx(locale, "Прогулка", "Out")], ["party", "✦", tx(locale, "Вечеринка", "Party")], ["sport", "⚡", tx(locale, "Спорт", "Sport")]].map(([id, emoji, label]) => <Pressable key={id} onPress={() => setOccasion(id!)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><Text style={styles.occasionEmoji}>{emoji}</Text><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
       </ScrollView>
       <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
-      {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><View style={styles.displaySwitch}><Pressable onPress={() => setAvatarMode(true)} style={[styles.displaySwitchOption, avatarMode && styles.displaySwitchOptionActive]}><Text style={[styles.displaySwitchText, avatarMode && styles.displaySwitchTextActive]}>{tx(locale, "Аватар", "Avatar")}</Text></Pressable><Pressable onPress={() => setAvatarMode(false)} style={[styles.displaySwitchOption, !avatarMode && styles.displaySwitchOptionActive]}><Text style={[styles.displaySwitchText, !avatarMode && styles.displaySwitchTextActive]}>{tx(locale, "Flat lay", "Flat lay")}</Text></Pressable></View>{avatarMode ? <FashionAvatar avatar={avatar} look={look} height={330} /> : <OutfitCanvas look={look} large />}<View style={styles.lookAdvice}><Text style={styles.lookAdviceTitle}>{look.hair.title}</Text><Text numberOfLines={2} style={styles.lookAdviceBody}>{look.hair.detail}</Text></View></View>}
+      {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} /></View>}
       <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
       <View style={styles.builderActions}><Pressable onPress={regenerate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Ещё варианты", "New options")}</Text></Pressable><Pressable onPress={publish} style={styles.primaryAction}><ImagePlus size={17} color={colors.paper} /><Text style={styles.primaryActionText}>{tx(locale, "Опубликовать", "Share look")}</Text></Pressable></View>
       <View style={styles.tipCard}><WandSparkles size={19} color={colors.ultraviolet} /><Text style={styles.tipText}>{tx(locale, "Нажми на вещь в готовом образе, чтобы заменить только её — остальной mood сохранится.", "Tap a piece to swap only that item while keeping the mood.")}</Text></View>
@@ -609,15 +601,19 @@ function ClosetScreen({ locale, wardrobe, addPhoto }: { locale: Locale; wardrobe
 
 function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onPlus, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; onEdit: () => void; onPlus: () => void; onDelete: () => void }) {
   const inspired = posts.reduce((total, post) => total + post.reactions, 0);
+  const genderLabel = GENDER_OPTIONS.find((option) => option.id === profile.genderPresentation)?.label[locale];
+  const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
+  const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
   return (
     <View>
-      <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatarStage}><FashionAvatar avatar={profile.avatarProfile} height={180} /></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль и аватар", "Edit profile & avatar")}</Text></Pressable></View>
+      <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{profile.nickname.slice(0, 1).toUpperCase()}</Text></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль", "Edit profile")}</Text></Pressable></View>
       <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>0</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>{inspired}</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
       <View style={styles.profileStyleCard}><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.miniLabel}>MY STYLE DNA</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text><Text style={styles.profileStyleBody}>{tx(locale, "Стиль меняется вместе с тобой. Это направление, а не ярлык.", "Your style grows with you. It is a direction, not a label.")}</Text></View>
+      <Pressable onPress={onEdit} style={styles.appearanceProfileCard}><View style={styles.appearanceProfileIcon}><Sparkles size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Параметры рекомендаций", "Guidance preferences")}</Text><Text style={styles.privacyBody}>{genderLabel} · {hairLength} · {hairColor}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
       <View style={styles.privacyCard}><View style={styles.privacyIcon}><LockKeyhole size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{mode === "social" ? tx(locale, "Профиль виден только твоему кругу", "Only your circle sees your profile") : tx(locale, "Закрытый возрастной режим", "Age-safe private mode")}</Text><Text style={styles.privacyBody}>{tx(locale, "Возраст не показывается. Геолокация и школа никогда не публикуются.", "Your age, school and location are never shown.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
-      <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитный AI, try-on и умные покупки", "Unlimited AI, try-on and smart shopping")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
+      <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитный AI, капсулы и умные покупки", "Unlimited AI, capsules and smart shopping")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
       <SectionTitle title={tx(locale, "Твои луки", "Your looks")} action={`${posts.length}`} />
-      {!posts.length ? <View style={styles.emptyLooks}><ImagePlus size={24} color={colors.secondary} /><Text style={styles.emptyLooksText}>{tx(locale, "Опубликуй первый лук — он появится здесь.", "Share your first look and it will live here.")}</Text></View> : <View style={styles.miniLooks}>{posts.map((post) => <View key={post.id} style={styles.miniLook}><FashionAvatar avatar={post.avatarProfile} look={post.outfit} height={210} /></View>)}</View>}
+      {!posts.length ? <View style={styles.emptyLooks}><ImagePlus size={24} color={colors.secondary} /><Text style={styles.emptyLooksText}>{tx(locale, "Опубликуй первый лук — он появится здесь.", "Share your first look and it will live here.")}</Text></View> : <View style={styles.miniLooks}>{posts.map((post) => <View key={post.id} style={styles.miniLook}><OutfitCanvas look={post.outfit} /></View>)}</View>}
       <Pressable onPress={onDelete} style={styles.deleteAccount}><Text style={styles.deleteAccountText}>{tx(locale, "Удалить аккаунт и данные", "Delete account and data")}</Text></Pressable>
     </View>
   );
@@ -632,6 +628,24 @@ function OutfitCanvas({ look, large = false }: { look: OutfitOption; large?: boo
       })}
     </View>
   );
+}
+
+function TotalLookSummary({ locale, look }: { locale: Locale; look: OutfitOption }) {
+  const details = look.items.filter((item) => ["headwear", "jewelry", "bag", "accessory"].includes(item.slot));
+  return <View style={styles.totalLookSummary}>
+    <View style={styles.totalLookSummaryTop}><Text style={styles.totalLookLabel}>{tx(locale, "ПОЛНЫЙ ОБРАЗ", "TOTAL LOOK")}</Text><View style={styles.freeBadge}><Text style={styles.freeBadgeText}>{tx(locale, "БЕСПЛАТНО", "FREE")}</Text></View></View>
+    <View style={styles.totalLookChips}><View style={styles.totalLookChip}><Text style={styles.totalLookChipLabel}>{tx(locale, "Укладка", "Hair")}</Text><Text numberOfLines={1} style={styles.totalLookChipValue}>{look.hair.title}</Text></View><View style={styles.totalLookChip}><Text style={styles.totalLookChipLabel}>{tx(locale, "Макияж", "Makeup")}</Text><Text numberOfLines={1} style={styles.totalLookChipValue}>{look.makeup.title}</Text></View><View style={styles.totalLookChip}><Text style={styles.totalLookChipLabel}>{tx(locale, "Детали", "Details")}</Text><Text numberOfLines={1} style={styles.totalLookChipValue}>{details.length ? details.map((item) => item.name).join(" · ") : tx(locale, "без перегруза", "kept minimal")}</Text></View></View>
+  </View>;
+}
+
+function TotalLookGuide({ locale, look }: { locale: Locale; look: OutfitOption }) {
+  const details = look.items.filter((item) => ["headwear", "jewelry", "bag", "accessory"].includes(item.slot));
+  return <View style={styles.totalLookGuide}>
+    <View style={styles.totalLookGuideHeader}><View><Text style={styles.totalLookLabel}>{tx(locale, "ФИНАЛЬНЫЕ ШТРИХИ", "FINISHING TOUCHES")}</Text><Text style={styles.totalLookGuideTitle}>{tx(locale, "Всё уже входит в образ", "Everything is part of the look")}</Text></View><View style={styles.freeBadge}><Text style={styles.freeBadgeText}>{tx(locale, "БЕСПЛАТНО", "FREE")}</Text></View></View>
+    <View style={styles.guideCard}><Text style={styles.guideCardEyebrow}>{tx(locale, "УКЛАДКА · ПО ДЛИНЕ ВОЛОС", "HAIR · MATCHED TO LENGTH")}</Text><Text style={styles.guideCardTitle}>{look.hair.title}</Text><Text style={styles.guideCardBody}>{look.hair.detail}</Text>{look.hair.colorAdvice && <Text style={styles.colorAdvice}>{look.hair.colorAdvice}</Text>}</View>
+    <View style={styles.guideCard}><Text style={styles.guideCardEyebrow}>{tx(locale, "МАКИЯЖ · ПО ВОЗРАСТУ И ПОДАЧЕ", "MAKEUP · AGE & PRESENTATION AWARE")}</Text><Text style={styles.guideCardTitle}>{look.makeup.title}</Text><Text style={styles.guideCardBody}>{look.makeup.detail}</Text></View>
+    <View style={styles.guideCard}><Text style={styles.guideCardEyebrow}>{tx(locale, "СУМКА · УКРАШЕНИЯ · ГОЛОВНОЙ УБОР", "BAG · JEWELRY · HEADWEAR")}</Text><Text style={styles.guideCardTitle}>{details.length ? tx(locale, "Подобраны из твоего шкафа", "Picked from your closet") : tx(locale, "Оставляем образ чистым", "Keeping the look clean")}</Text><Text style={styles.guideCardBody}>{details.length ? details.map((item) => item.name).join(" · ") : tx(locale, "MIRA не добавляет аксессуар ради аксессуара — только если он поддерживает выбранный стиль.", "MIRA only adds an accessory when it genuinely supports the chosen style.")}</Text></View>
+  </View>;
 }
 
 function BottomNav({ locale, active, onChange }: { locale: Locale; active: Tab; onChange: (tab: Tab) => void }) {
@@ -654,25 +668,22 @@ function Onboarding({ initial, firstRun, onDone, onClose }: { initial: ProfileSt
         {step === 0 && <><Text style={styles.onboardingTitle}>Choose your language</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Все стили, подсказки и интерфейс будут на выбранном языке.", "Styles, guidance and the interface follow your language.")}</Text><View style={styles.languageCards}>{(["ru", "en"] as Locale[]).map((value) => <Pressable key={value} onPress={() => setDraft((current) => ({ ...current, locale: value }))} style={[styles.languageCard, draft.locale === value && styles.languageCardActive]}><Text style={styles.languageCode}>{value.toUpperCase()}</Text><Text style={styles.languageName}>{value === "ru" ? "Русский" : "English"}</Text>{draft.locale === value && <Check size={19} color={colors.ultraviolet} />}</Pressable>)}</View></>}
         {step === 1 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Профиль без лишних вопросов", "A profile without the friction")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Возраст меняет подсказки, приватность и доступ к social-функциям. Точная дата рождения не нужна.", "Age changes guidance, privacy and social access. We do not need your full birth date.")}</Text><View style={styles.agePicker}><Pressable disabled={!firstRun} onPress={() => setDraft((p) => ({ ...p, age: Math.max(0, p.age - 1) }))} style={[styles.ageButton, !firstRun && { opacity: 0.35 }]}><Minus size={20} color={colors.graphite} /></Pressable><View><Text style={styles.ageNumber}>{draft.age}</Text><Text style={styles.ageYears}>{tx(draft.locale, "лет", "years")}</Text></View><Pressable disabled={!firstRun} onPress={() => setDraft((p) => ({ ...p, age: Math.min(18, p.age + 1) }))} style={[styles.ageButton, !firstRun && { opacity: 0.35 }]}><Plus size={20} color={colors.graphite} /></Pressable></View><View style={styles.ageModeCard}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.ageModeText}>{draft.age < 10 ? tx(draft.locale, "Семейный режим без открытой соцсети", "Family mode without an open social feed") : draft.age < 13 ? tx(draft.locale, "Закрытый круг по invite-коду", "Private circle by invite only") : tx(draft.locale, "Social-режим, закрытый по умолчанию", "Social mode, private by default")}</Text></View><Text style={styles.inputLabel}>{tx(draft.locale, "КАК ТЕБЯ НАЗЫВАТЬ", "WHAT SHOULD WE CALL YOU")}</Text><TextInput value={draft.nickname} onChangeText={(nickname) => setDraft((p) => ({ ...p, nickname }))} style={styles.bigInput} maxLength={30} /><Text style={styles.inputLabel}>ID</Text><View style={styles.handleInput}><Text style={styles.handlePrefix}>@</Text><TextInput editable={firstRun} autoCapitalize="none" value={draft.handle} onChangeText={(handle) => setDraft((p) => ({ ...p, handle: handle.replace(/[^a-zA-Z0-9._]/g, "").toLowerCase() }))} style={[styles.handleTextInput, !firstRun && { opacity: 0.55 }]} maxLength={24} /></View></>}
         {step === 2 && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Настроим настроение", "Set the mood") : tx(draft.locale, "Стиль — это твой язык", "Style is your language")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Для маленьких детей стиль выбирает взрослый и может менять его в любой момент.", "A parent sets the direction for little ones and can change it anytime.") : tx(draft.locale, "Выбери до трёх направлений. MIRA научится смешивать их из твоих реальных вещей.", "Choose up to three directions. MIRA learns to mix them using your real clothes.")}</Text><View style={[styles.searchBar, { marginBottom: 12 }]}><Search size={17} color={colors.secondary} /><TextInput value={styleSearch} onChangeText={setStyleSearch} placeholder={tx(draft.locale, "Найти: emo, Stockholm, fairycore…", "Find: emo, Stockholm, fairycore…")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View><View style={styles.styleChoiceGrid}>{visibleCatalog.map((style) => { const selected = draft.styles.includes(style.id); return <Pressable key={style.id} onPress={() => toggleStyle(style.id)} style={[styles.styleChoice, selected && styles.styleChoiceActive]}><View style={styles.styleChoicePalette}>{style.palette.slice(0, 4).map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.styleChoiceName}>{style.name}</Text>{selected && <View style={styles.styleSelected}><Check size={12} color={colors.paper} /></View>}</Pressable>; })}</View></>}
-        {step === 3 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Создай свою MIRA", "Create your MIRA")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Это fashion-аватар, а не оценка тела. Он показывает сочетание, цвет и силуэт вещей из твоего настоящего шкафа.", "This is a fashion avatar, not a body rating. It shows the mix, color and silhouette of pieces from your real closet.")}</Text><AvatarCustomizer locale={draft.locale} value={draft.avatarProfile} styleId={draft.styles[0] ?? "stockholm"} onChange={(avatarProfile) => setDraft((current) => ({ ...current, avatarProfile }))} /></>}
+        {step === 3 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Советы именно для тебя", "Guidance that fits you")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Пол и параметры волос нужны только для укладки и возрастных рекомендаций по макияжу. Они не показываются другим людям.", "Gender and hair details are only used for hairstyle and age-aware makeup guidance. They are never shown to other people.")}</Text><AppearanceCustomizer locale={draft.locale} gender={draft.genderPresentation} hair={draft.hairProfile} onGenderChange={(genderPresentation) => setDraft((current) => ({ ...current, genderPresentation }))} onHairChange={(hairProfile) => setDraft((current) => ({ ...current, hairProfile }))} /></>}
       </ScrollView>
       <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={step === 2 && !draft.styles.length} onPress={() => step < 3 ? setStep((value) => value + 1) : void onDone(draft)} style={styles.onboardingCta}><Text style={styles.onboardingCtaText}>{step === 3 ? tx(draft.locale, "Войти в MIRA", "Enter MIRA") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
     </KeyboardAvoidingView>
   );
 }
 
-function AvatarCustomizer({ locale, value, styleId, onChange }: { locale: Locale; value: AvatarProfile; styleId: string; onChange: (value: AvatarProfile) => void }) {
-  const previewLook = useMemo(() => demoOutfits(styleId, locale)[0], [locale, styleId]);
+function AppearanceCustomizer({ locale, gender, hair, onGenderChange, onHairChange }: { locale: Locale; gender: GenderPresentation; hair: HairProfile; onGenderChange: (value: GenderPresentation) => void; onHairChange: (value: HairProfile) => void }) {
   return <View>
-    <View style={styles.avatarBuilder}><LinearGradient colors={["#E6E0FF", "#FFE6EC", "#DDF5F3"]} style={StyleSheet.absoluteFill} /><View style={styles.avatarBuilderMark}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.avatarBuilderMarkText}>LIVE LOOK</Text></View><FashionAvatar avatar={value} {...(previewLook ? { look: previewLook } : {})} height={314} /></View>
-    <Text style={styles.avatarControlLabel}>{tx(locale, "ОТТЕНОК КОЖИ", "SKIN TONE")}</Text>
-    <View style={styles.skinOptions}>{AVATAR_SKIN_OPTIONS.map((option) => <Pressable accessibilityLabel={option.id} key={option.id} onPress={() => onChange({ ...value, skinTone: option.id })} style={[styles.skinOption, value.skinTone === option.id && styles.skinOptionActive]}><View style={[styles.skinSwatch, { backgroundColor: option.color }]} />{value.skinTone === option.id && <Check size={12} color={colors.graphite} />}</Pressable>)}</View>
-    <Text style={styles.avatarControlLabel}>{tx(locale, "ЦВЕТ ВОЛОС", "HAIR COLOR")}</Text>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.avatarChoiceRail}>{AVATAR_HAIR_COLORS.map((option) => <Pressable key={option.id} onPress={() => onChange({ ...value, hairColor: option.id })} style={[styles.avatarColorChoice, value.hairColor === option.id && styles.avatarChoiceActive]}><View style={[styles.hairSwatch, { backgroundColor: option.color }]} /><Text style={styles.avatarChoiceText}>{option.label[locale]}</Text></Pressable>)}</ScrollView>
-    <Text style={styles.avatarControlLabel}>{tx(locale, "УКЛАДКА", "HAIRSTYLE")}</Text>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.avatarChoiceRail}>{AVATAR_HAIR_STYLES.map((option) => <Pressable key={option.id} onPress={() => onChange({ ...value, hairStyle: option.id })} style={[styles.avatarTextChoice, value.hairStyle === option.id && styles.avatarChoiceActive]}><Text style={[styles.avatarChoiceText, value.hairStyle === option.id && styles.avatarChoiceTextActive]}>{option.label[locale]}</Text></Pressable>)}</ScrollView>
-    <Text style={styles.avatarControlLabel}>{tx(locale, "ПОЗА", "POSE")}</Text>
-    <View style={styles.poseOptions}>{AVATAR_POSES.map((option) => <Pressable key={option.id} onPress={() => onChange({ ...value, pose: option.id })} style={[styles.avatarTextChoice, styles.poseOption, value.pose === option.id && styles.avatarChoiceActive]}><Text style={[styles.avatarChoiceText, value.pose === option.id && styles.avatarChoiceTextActive]}>{option.label[locale]}</Text></Pressable>)}</View>
+    <Text style={styles.appearanceLabel}>{tx(locale, "ПОЛ / ПОДАЧА", "GENDER / PRESENTATION")}</Text>
+    <View style={styles.genderGrid}>{GENDER_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onGenderChange(option.id)} style={[styles.genderCard, gender === option.id && styles.genderCardActive]}><Text style={[styles.genderSymbol, gender === option.id && styles.genderSymbolActive]}>{option.symbol}</Text><View style={{ flex: 1 }}><Text style={[styles.genderTitle, gender === option.id && styles.genderTitleActive]}>{option.label[locale]}</Text><Text style={[styles.genderBody, gender === option.id && styles.genderBodyActive]}>{option.description[locale]}</Text></View>{gender === option.id && <Check size={15} color={colors.paper} />}</Pressable>)}</View>
+    <Text style={styles.appearanceLabel}>{tx(locale, "ДЛИНА ВОЛОС", "HAIR LENGTH")}</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appearanceRail}>{HAIR_LENGTH_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onHairChange({ ...hair, length: option.id })} style={[styles.appearanceChoice, hair.length === option.id && styles.appearanceChoiceActive]}><Text style={[styles.appearanceChoiceText, hair.length === option.id && styles.appearanceChoiceTextActive]}>{option.label[locale]}</Text></Pressable>)}</ScrollView>
+    <Text style={styles.appearanceLabel}>{tx(locale, "ЦВЕТ ВОЛОС", "HAIR COLOR")}</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appearanceRail}>{HAIR_COLOR_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onHairChange({ ...hair, color: option.id })} style={[styles.hairColorChoice, hair.color === option.id && styles.hairColorChoiceActive]}><View style={[styles.hairColorSwatch, { backgroundColor: option.color }]} /><Text style={styles.hairColorText}>{option.label[locale]}</Text>{hair.color === option.id && <Check size={12} color={colors.ultraviolet} />}</Pressable>)}</ScrollView>
+    <View style={styles.appearancePrivacy}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.appearancePrivacyText}>{tx(locale, "MIRA может подсказать другой цвет волос для выбранного стиля, но это всегда необязательная идея — не требование.", "MIRA may suggest another hair color for a style, but it is always an optional idea, never a requirement.")}</Text></View>
   </View>;
 }
 
@@ -725,7 +736,7 @@ function ChatScreen({ locale, age, token, onClose }: { locale: Locale; age: numb
 
 function Paywall({ locale, onClose }: { locale: Locale; onClose: () => void }) {
   const [yearly, setYearly] = useState(true);
-  return <View style={styles.paywall}><LinearGradient colors={["#17131D", "#30234D", "#6848E6"]} style={StyleSheet.absoluteFill} /><OverlayHeader title="" onClose={onClose} light /><ScrollView contentContainerStyle={styles.paywallContent}><View style={styles.paywallMark}><Sparkles size={28} color={colors.warm} /></View><Text style={styles.paywallEyebrow}>MIRA PLUS</Text><Text style={styles.paywallTitle}>{tx(locale, "Твой стиль. Без лимитов.", "Your style. No limits.")}</Text><Text style={styles.paywallLead}>{tx(locale, "Плати за решения, которые экономят время и помогают носить больше — не за искусственные звёздочки.", "Pay for useful decisions that save time and unlock your closet — not artificial coins.")}</Text><View style={styles.featureList}>{PLUS_FEATURES[locale].map((feature) => <View key={feature} style={styles.featureRow}><View style={styles.featureCheck}><Check size={13} color={colors.night} /></View><Text style={styles.featureText}>{feature}</Text></View>)}</View><View style={styles.billingSwitch}><Pressable onPress={() => setYearly(true)} style={[styles.billingOption, yearly && styles.billingOptionActive]}><Text style={[styles.billingText, yearly && styles.billingTextActive]}>{tx(locale, "Год", "Yearly")}</Text><Text style={styles.saveText}>−42%</Text></Pressable><Pressable onPress={() => setYearly(false)} style={[styles.billingOption, !yearly && styles.billingOptionActive]}><Text style={[styles.billingText, !yearly && styles.billingTextActive]}>{tx(locale, "Месяц", "Monthly")}</Text></Pressable></View><View style={styles.priceRow}><Text style={styles.price}>{yearly ? "$29.99" : "$4.99"}</Text><Text style={styles.pricePeriod}>/{yearly ? tx(locale, "год", "year") : tx(locale, "месяц", "month")}</Text></View><Pressable style={styles.paywallCta}><Text style={styles.paywallCtaText}>{tx(locale, "Попробовать 7 дней бесплатно", "Start 7-day free trial")}</Text><ChevronRight size={19} color={colors.night} /></Pressable><Text style={styles.paywallFine}>{tx(locale, "Отмена в любой момент. Покупка подтверждается через App Store.", "Cancel anytime. Purchase is confirmed through the App Store.")}</Text></ScrollView></View>;
+  return <View style={styles.paywall}><LinearGradient colors={["#17131D", "#30234D", "#6848E6"]} style={StyleSheet.absoluteFill} /><OverlayHeader title="" onClose={onClose} light /><ScrollView contentContainerStyle={styles.paywallContent}><View style={styles.paywallMark}><Sparkles size={28} color={colors.warm} /></View><Text style={styles.paywallEyebrow}>MIRA PLUS</Text><Text style={styles.paywallTitle}>{tx(locale, "Твой стиль. Без лимитов.", "Your style. No limits.")}</Text><Text style={styles.paywallLead}>{tx(locale, "Плати за решения, которые экономят время и помогают носить больше — не за искусственные звёздочки.", "Pay for useful decisions that save time and unlock your closet — not artificial coins.")}</Text><View style={styles.coreFreeNotice}><Check size={15} color={colors.warm} /><Text style={styles.coreFreeNoticeText}>{tx(locale, "Сумки, украшения, головные уборы, макияж и укладка остаются в бесплатной версии.", "Bags, jewelry, headwear, makeup and hairstyle guidance stay free.")}</Text></View><View style={styles.featureList}>{PLUS_FEATURES[locale].map((feature) => <View key={feature} style={styles.featureRow}><View style={styles.featureCheck}><Check size={13} color={colors.night} /></View><Text style={styles.featureText}>{feature}</Text></View>)}</View><View style={styles.billingSwitch}><Pressable onPress={() => setYearly(true)} style={[styles.billingOption, yearly && styles.billingOptionActive]}><Text style={[styles.billingText, yearly && styles.billingTextActive]}>{tx(locale, "Год", "Yearly")}</Text><Text style={styles.saveText}>−42%</Text></Pressable><Pressable onPress={() => setYearly(false)} style={[styles.billingOption, !yearly && styles.billingOptionActive]}><Text style={[styles.billingText, !yearly && styles.billingTextActive]}>{tx(locale, "Месяц", "Monthly")}</Text></Pressable></View><View style={styles.priceRow}><Text style={styles.price}>{yearly ? "$29.99" : "$4.99"}</Text><Text style={styles.pricePeriod}>/{yearly ? tx(locale, "год", "year") : tx(locale, "месяц", "month")}</Text></View><Pressable style={styles.paywallCta}><Text style={styles.paywallCtaText}>{tx(locale, "Попробовать 7 дней бесплатно", "Start 7-day free trial")}</Text><ChevronRight size={19} color={colors.night} /></Pressable><Text style={styles.paywallFine}>{tx(locale, "Отмена в любой момент. Покупка подтверждается через App Store.", "Cancel anytime. Purchase is confirmed through the App Store.")}</Text></ScrollView></View>;
 }
 
 function LockedSocial({ locale, age }: { locale: Locale; age: number }) {
@@ -769,11 +780,6 @@ const styles = StyleSheet.create({
   lookMood: { fontFamily: typography.displaySoft, fontSize: 16, color: colors.graphite, marginTop: 4, textTransform: "capitalize" },
   matchPill: { paddingHorizontal: 10, height: 31, borderRadius: 16, backgroundColor: "#FFFFFFD6", flexDirection: "row", alignItems: "center", gap: 5 },
   matchText: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.ultraviolet },
-  displaySwitch: { alignSelf: "center", minWidth: 176, height: 36, padding: 4, borderRadius: 15, backgroundColor: "#FFFFFFB8", flexDirection: "row", marginTop: 10, zIndex: 2 },
-  displaySwitchOption: { flex: 1, borderRadius: 11, alignItems: "center", justifyContent: "center", paddingHorizontal: 9 },
-  displaySwitchOptionActive: { backgroundColor: colors.graphite },
-  displaySwitchText: { fontFamily: typography.bodySemibold, fontSize: 8.8, color: colors.secondary },
-  displaySwitchTextActive: { color: colors.paper },
   outfitCanvas: { minHeight: 210, paddingVertical: 14, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "center", gap: 9 },
   outfitCanvasLarge: { minHeight: 324, paddingTop: 25, paddingBottom: 10 },
   outfitPiece: { width: "29%", minHeight: 88, alignItems: "center", justifyContent: "center" },
@@ -781,6 +787,15 @@ const styles = StyleSheet.create({
   outfitColor: { width: "100%", aspectRatio: 1.08, borderRadius: 22, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: "#FFFFFFB8" },
   outfitImage: { width: "100%", height: 90 },
   outfitItemName: { fontFamily: typography.bodyMedium, fontSize: 8.2, color: colors.graphite, marginTop: 4, maxWidth: "100%" },
+  totalLookSummary: { borderRadius: 17, backgroundColor: "#FFFFFFC9", padding: 11, marginBottom: 11 },
+  totalLookSummaryTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  totalLookLabel: { fontFamily: typography.bodySemibold, fontSize: 8, color: colors.ultraviolet, letterSpacing: 1.05 },
+  freeBadge: { borderRadius: 10, backgroundColor: colors.mint, paddingHorizontal: 7, paddingVertical: 4 },
+  freeBadgeText: { fontFamily: typography.bodySemibold, fontSize: 7, color: colors.success, letterSpacing: 0.5 },
+  totalLookChips: { flexDirection: "row", gap: 6 },
+  totalLookChip: { flex: 1, minWidth: 0, borderRadius: 12, backgroundColor: "#FFFFFFA8", padding: 8 },
+  totalLookChipLabel: { fontFamily: typography.bodySemibold, fontSize: 7.2, color: colors.secondary },
+  totalLookChipValue: { fontFamily: typography.bodySemibold, fontSize: 8.2, color: colors.graphite, marginTop: 3 },
   heroActions: { flexDirection: "row", gap: 9, marginTop: 4 },
   secondaryAction: { flex: 1, minHeight: 48, borderRadius: 16, backgroundColor: colors.paper, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: colors.line },
   secondaryActionText: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
@@ -836,7 +851,7 @@ const styles = StyleSheet.create({
   postName: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.graphite },
   postHandle: { fontFamily: typography.body, color: colors.secondary },
   postTime: { fontFamily: typography.body, fontSize: 9.5, color: colors.secondary, marginTop: 2 },
-  postCanvas: { minHeight: 285, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  postCanvas: { minHeight: 235, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   postCaption: { fontFamily: typography.bodyMedium, fontSize: 11.5, lineHeight: 17, color: colors.graphite, marginTop: 11 },
   postActions: { flexDirection: "row", alignItems: "center", marginTop: 10, gap: 15 },
   socialAction: { flexDirection: "row", alignItems: "center", gap: 5 },
@@ -853,9 +868,14 @@ const styles = StyleSheet.create({
   createStyleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   createStyleName: { fontFamily: typography.displaySoft, fontSize: 14, color: colors.graphite, textTransform: "capitalize" },
   builderCanvas: { minHeight: 430, borderRadius: 27, overflow: "hidden", padding: 15 },
-  lookAdvice: { backgroundColor: "#FFFFFFD9", borderRadius: 16, padding: 11 },
-  lookAdviceTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
-  lookAdviceBody: { fontFamily: typography.body, fontSize: 9.5, lineHeight: 14, color: colors.secondary, marginTop: 3 },
+  totalLookGuide: { borderRadius: 20, backgroundColor: "#FFFFFFD9", padding: 12, gap: 8 },
+  totalLookGuideHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 2 },
+  totalLookGuideTitle: { fontFamily: typography.displaySoft, fontSize: 11, color: colors.graphite, marginTop: 4 },
+  guideCard: { borderRadius: 14, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 10 },
+  guideCardEyebrow: { fontFamily: typography.bodySemibold, fontSize: 7.2, color: colors.ultraviolet, letterSpacing: 0.7 },
+  guideCardTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite, marginTop: 5 },
+  guideCardBody: { fontFamily: typography.body, fontSize: 9, lineHeight: 13.5, color: colors.secondary, marginTop: 3 },
+  colorAdvice: { fontFamily: typography.bodyMedium, fontSize: 8.5, lineHeight: 13, color: colors.ultraviolet, backgroundColor: colors.violetMist, borderRadius: 10, padding: 7, marginTop: 7 },
   lookDots: { flexDirection: "row", justifyContent: "center", gap: 6, paddingVertical: 13 },
   lookDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#CBC6D1" },
   lookDotActive: { width: 22, backgroundColor: colors.ultraviolet },
@@ -884,8 +904,7 @@ const styles = StyleSheet.create({
   processingText: { fontFamily: typography.bodySemibold, fontSize: 7.5, color: colors.ultraviolet },
   closetName: { fontFamily: typography.bodySemibold, fontSize: 9.5, lineHeight: 13, color: colors.graphite, marginTop: 6 },
   closetMeta: { fontFamily: typography.body, fontSize: 8, color: colors.success, marginTop: 2 },
-  profileHero: { minHeight: 330, borderRadius: 27, overflow: "hidden", alignItems: "center", padding: 20 },
-  profileAvatarStage: { width: 164, height: 176, overflow: "hidden", marginTop: -4 },
+  profileHero: { minHeight: 238, borderRadius: 27, overflow: "hidden", alignItems: "center", padding: 23 },
   profileAvatar: { width: 72, height: 72, borderRadius: 27, backgroundColor: colors.graphite, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: colors.paper },
   profileAvatarText: { fontFamily: typography.display, fontSize: 25, color: colors.paper },
   profileName: { fontFamily: typography.displaySoft, fontSize: 20, color: colors.graphite, marginTop: 10 },
@@ -898,6 +917,8 @@ const styles = StyleSheet.create({
   profileStyleCard: { backgroundColor: colors.paper, borderRadius: 22, borderWidth: 1, borderColor: colors.line, overflow: "hidden", padding: 16, paddingLeft: 24 },
   profileStyleName: { fontFamily: typography.displaySoft, fontSize: 15, color: colors.graphite, marginTop: 7, textTransform: "capitalize" },
   profileStyleBody: { fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary, marginTop: 7 },
+  appearanceProfileCard: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.paper, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 13, marginTop: 11 },
+  appearanceProfileIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
   privacyCard: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.paper, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 13, marginTop: 11 },
   privacyIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
   privacyTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
@@ -953,23 +974,27 @@ const styles = StyleSheet.create({
   styleChoicePalette: { height: 29, flexDirection: "row" },
   styleChoiceName: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite, paddingHorizontal: 10, paddingTop: 9 },
   styleSelected: { position: "absolute", right: 7, bottom: 7, width: 21, height: 21, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.ultraviolet },
-  avatarBuilder: { height: 334, borderRadius: 27, overflow: "hidden", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#FFFFFFB8" },
-  avatarBuilderMark: { position: "absolute", left: 13, top: 13, zIndex: 2, height: 27, paddingHorizontal: 9, borderRadius: 12, backgroundColor: "#FFFFFFC9", flexDirection: "row", alignItems: "center", gap: 5 },
-  avatarBuilderMarkText: { fontFamily: typography.bodySemibold, fontSize: 7.7, letterSpacing: 0.8, color: colors.ultraviolet },
-  avatarControlLabel: { fontFamily: typography.bodySemibold, fontSize: 8.5, letterSpacing: 1.1, color: colors.secondary, marginTop: 19, marginBottom: 9 },
-  skinOptions: { flexDirection: "row", justifyContent: "space-between", gap: 6 },
-  skinOption: { flex: 1, height: 43, borderRadius: 14, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3 },
-  skinOptionActive: { borderColor: colors.graphite, borderWidth: 2 },
-  skinSwatch: { width: 25, height: 25, borderRadius: 10 },
-  avatarChoiceRail: { gap: 7, paddingRight: 5 },
-  avatarColorChoice: { minWidth: 91, height: 47, borderRadius: 15, paddingHorizontal: 9, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 7 },
-  hairSwatch: { width: 24, height: 24, borderRadius: 9, borderWidth: 1, borderColor: "#00000012" },
-  avatarTextChoice: { minHeight: 41, borderRadius: 14, paddingHorizontal: 13, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
-  avatarChoiceActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
-  avatarChoiceText: { fontFamily: typography.bodySemibold, fontSize: 9, color: colors.secondary },
-  avatarChoiceTextActive: { color: colors.paper },
-  poseOptions: { flexDirection: "row", gap: 7 },
-  poseOption: { flex: 1, paddingHorizontal: 6 },
+  appearanceLabel: { fontFamily: typography.bodySemibold, fontSize: 8.5, letterSpacing: 1.1, color: colors.secondary, marginTop: 17, marginBottom: 9 },
+  genderGrid: { gap: 8 },
+  genderCard: { minHeight: 66, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13 },
+  genderCardActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
+  genderSymbol: { width: 34, fontFamily: typography.displaySoft, fontSize: 19, color: colors.ultraviolet, textAlign: "center" },
+  genderSymbolActive: { color: colors.warm },
+  genderTitle: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.graphite },
+  genderTitleActive: { color: colors.paper },
+  genderBody: { fontFamily: typography.body, fontSize: 9, color: colors.secondary, marginTop: 2 },
+  genderBodyActive: { color: "#CFC8DA" },
+  appearanceRail: { gap: 7, paddingRight: 6 },
+  appearanceChoice: { minHeight: 42, borderRadius: 14, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 13, alignItems: "center", justifyContent: "center" },
+  appearanceChoiceActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
+  appearanceChoiceText: { fontFamily: typography.bodySemibold, fontSize: 9, color: colors.secondary },
+  appearanceChoiceTextActive: { color: colors.paper },
+  hairColorChoice: { minWidth: 101, height: 46, borderRadius: 15, paddingHorizontal: 9, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 7 },
+  hairColorChoiceActive: { borderColor: colors.ultraviolet, borderWidth: 2 },
+  hairColorSwatch: { width: 24, height: 24, borderRadius: 9, borderWidth: 1, borderColor: "#00000012" },
+  hairColorText: { flex: 1, fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.graphite },
+  appearancePrivacy: { flexDirection: "row", gap: 9, borderRadius: 16, backgroundColor: colors.violetMist, padding: 12, marginTop: 17 },
+  appearancePrivacyText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 14.5, color: colors.graphite },
   onboardingFooter: { minHeight: 76, paddingHorizontal: 18, paddingBottom: 10, flexDirection: "row", alignItems: "center", gap: 9, borderTopWidth: 1, borderTopColor: colors.line },
   backRound: { width: 49, height: 49, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
   onboardingCta: { flex: 1, height: 51, borderRadius: 17, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.graphite },
@@ -999,7 +1024,9 @@ const styles = StyleSheet.create({
   paywallEyebrow: { fontFamily: typography.bodySemibold, fontSize: 10, letterSpacing: 1.7, color: colors.warm, marginTop: 16 },
   paywallTitle: { fontFamily: typography.display, fontSize: 27, lineHeight: 34, color: colors.paper, textAlign: "center", letterSpacing: -1.4, marginTop: 8 },
   paywallLead: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 18, color: "#D0C8DD", textAlign: "center", marginTop: 10 },
-  featureList: { width: "100%", gap: 12, marginTop: 25 },
+  coreFreeNotice: { width: "100%", borderRadius: 16, backgroundColor: "#FFFFFF10", borderWidth: 1, borderColor: "#FFFFFF1A", flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 11, marginTop: 18 },
+  coreFreeNoticeText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 14.5, color: colors.paper },
+  featureList: { width: "100%", gap: 12, marginTop: 18 },
   featureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   featureCheck: { width: 24, height: 24, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.warm },
   featureText: { fontFamily: typography.bodyMedium, fontSize: 11, color: colors.paper },

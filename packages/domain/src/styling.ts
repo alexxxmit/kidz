@@ -72,6 +72,21 @@ const fallbackHair: Record<HairLength, LocalizedText> = {
   },
 };
 
+const presentationHairFinish: Record<Exclude<GenderPresentation, "NOT_SPECIFIED">, LocalizedText> = {
+  FEMININE: {
+    ru: "Для женственной подачи можно добавить мягкие пряди у лица или более гладкий финиш.",
+    en: "For a feminine direction, add soft face-framing pieces or a sleeker finish.",
+  },
+  MASCULINE: {
+    ru: "Для мужской подачи можно оставить более графичный контур и естественную текстуру без лишней фиксации.",
+    en: "For a masculine direction, keep a more graphic outline and natural texture without heavy hold.",
+  },
+  NEUTRAL: {
+    ru: "Для нейтральной подачи выбирай степень гладкости и объёма без гендерных правил.",
+    en: "For a neutral direction, choose the level of sleekness and volume without gender rules.",
+  },
+};
+
 const defaultConfig: StyleStylingConfig = {
   preferredHairColors: ["BLACK", "DARK_BROWN", "BROWN", "LIGHT_BROWN"],
   colorDirection: {
@@ -941,8 +956,9 @@ const hairText = (
   const genderSpecific = config.hair[genderPresentation]?.[length];
   if (genderSpecific) return localized(locale, genderSpecific);
   const lengthSpecific = config.hair[length];
-  if (lengthSpecific) return localized(locale, lengthSpecific);
-  return localized(locale, fallbackHair[length]);
+  const base = localized(locale, lengthSpecific ?? fallbackHair[length]);
+  if (genderPresentation === "NOT_SPECIFIED") return base;
+  return `${base}. ${localized(locale, presentationHairFinish[genderPresentation])}`;
 };
 
 const makeupTextForPresentation = (
