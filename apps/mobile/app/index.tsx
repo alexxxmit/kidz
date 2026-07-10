@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { DirectMessage, Locale, LookPost, OutfitOption } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { BlurView } from "expo-blur";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -86,6 +87,7 @@ type ProfileState = {
 
 const PROFILE_KEY = "mira.profile.v2";
 const TOKEN_KEY = "mira.session.v1";
+const WARDROBE_KEY = "mira.wardrobe.v1";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm", "emo"] };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
@@ -111,6 +113,18 @@ const storage = {
   getToken: () => Platform.OS === "web" ? AsyncStorage.getItem(TOKEN_KEY) : SecureStore.getItemAsync(TOKEN_KEY),
   setToken: (value: string) => Platform.OS === "web" ? AsyncStorage.setItem(TOKEN_KEY, value) : SecureStore.setItemAsync(TOKEN_KEY, value),
   deleteToken: () => Platform.OS === "web" ? AsyncStorage.removeItem(TOKEN_KEY) : SecureStore.deleteItemAsync(TOKEN_KEY),
+};
+const wardrobeDirectory = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}mira-wardrobe/` : undefined;
+const persistWardrobeImage = async (source: string, localId: string, kind: "source" | "cutout") => {
+  if (Platform.OS === "web" || !wardrobeDirectory) return source;
+  await FileSystem.makeDirectoryAsync(wardrobeDirectory, { intermediates: true }).catch(() => undefined);
+  const destination = `${wardrobeDirectory}${localId}-${kind}.png`;
+  if (source.startsWith("data:")) {
+    await FileSystem.writeAsStringAsync(destination, source.split(",", 2)[1] ?? "", { encoding: FileSystem.EncodingType.Base64 });
+  } else {
+    await FileSystem.copyAsync({ from: source, to: destination });
+  }
+  return destination;
 };
 
 export default function MiraApp() {
@@ -149,16 +163,23 @@ export default function MiraApp() {
   }, [locale, profile.age, token]);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken()]).then(([saved, savedToken]) => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY)]).then(([saved, savedToken, savedWardrobe]) => {
       if (saved) {
         try { setProfile(JSON.parse(saved) as ProfileState); } catch { setOverlay("onboarding"); }
       } else {
         setOverlay("onboarding");
       }
       if (savedToken) setToken(savedToken);
+      if (savedWardrobe) {
+        try { setWardrobe(JSON.parse(savedWardrobe) as typeof wardrobePreview); } catch { /* Start with the safe demo closet. */ }
+      }
       setHydrated(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (hydrated) void AsyncStorage.setItem(WARDROBE_KEY, JSON.stringify(wardrobe));
+  }, [hydrated, wardrobe]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -273,10 +294,11 @@ export default function MiraApp() {
     const source = STARTER_WARDROBE[0]!;
     const asset = result.assets[0];
     const localId = `photo-${Date.now()}`;
-    setWardrobe((items) => [{ ...source, name: tx(locale, "Новая вещь", "New piece"), imageUri: asset.uri, imageProcessingState: "PENDING_CUTOUT", localId }, ...items]);
+    const storedSource = await persistWardrobeImage(asset.uri, localId, "source").catch(() => asset.uri);
+    setWardrobe((items) => [{ ...source, name: tx(locale, "Новая вещь", "New piece"), imageUri: storedSource, imageProcessingState: "PENDING_CUTOUT", localId }, ...items]);
     notify(tx(locale, "Фото добавлено · AI вырезает фон", "Photo added · AI is removing the background"));
     if (asset.base64) {
-      void cutoutWardrobePhoto(asset.base64).then((cutoutUri) => {
+      void cutoutWardrobePhoto(asset.base64).then((cutoutUri) => persistWardrobeImage(cutoutUri, localId, "cutout")).then((cutoutUri) => {
         setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" } : item));
         notify(tx(locale, "Фон вырезан · вещь готова", "Background removed · piece is ready"));
       }).catch(() => {
@@ -333,9 +355,11 @@ export default function MiraApp() {
 
   const removeAccount = async () => {
     if (token) await deleteAccount(token).catch(() => undefined);
-    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), storage.deleteToken()]);
+    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), storage.deleteToken()]);
+    if (Platform.OS !== "web" && wardrobeDirectory) await FileSystem.deleteAsync(wardrobeDirectory, { idempotent: true }).catch(() => undefined);
     setToken(undefined);
     setProfile(defaultProfile);
+    setWardrobe(wardrobePreview);
     setPosts([]);
     setOverlay("onboarding");
   };
