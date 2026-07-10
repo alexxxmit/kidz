@@ -1,8 +1,11 @@
 import type {
+  AccountPatchInput,
   AiStylistInput,
   AiStylistResponse,
+  DirectMessage,
   GuestSession,
   GuestSessionInput,
+  LookPost,
   LookPostInput,
   OutfitOption,
   ProfileInput,
@@ -17,7 +20,7 @@ const request = async <T>(path: string, init?: RequestInit, accessToken?: string
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      "content-type": "application/json",
+      ...(init?.body ? { "content-type": "application/json" } : {}),
       ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
       ...init?.headers,
     },
@@ -32,14 +35,52 @@ export const createGuestSession = (input: GuestSessionInput) =>
 export const deleteAccount = (accessToken: string) =>
   request<{ deleted: true }>("/v1/auth/me", { method: "DELETE" }, accessToken);
 
+export const updateSocialAccount = (accessToken: string, input: AccountPatchInput) =>
+  request("/v1/social/me", { method: "PATCH", body: JSON.stringify(input) }, accessToken);
+
 export const askAiStylist = (accessToken: string, input: AiStylistInput) =>
   request<AiStylistResponse>("/v1/ai/stylist", { method: "POST", body: JSON.stringify(input) }, accessToken);
 
 export const publishLook = (accessToken: string, input: LookPostInput) =>
-  request<{ id: string }>("/v1/social/look-posts", { method: "POST", body: JSON.stringify(input) }, accessToken);
+  request<{ id: string; visibility: string; moderationState: string }>("/v1/social/look-posts", { method: "POST", body: JSON.stringify(input) }, accessToken);
 
 export const loadSocialFeed = (accessToken: string) =>
-  request<{ posts: unknown[] }>("/v1/social/feed", undefined, accessToken);
+  request<{ posts: LookPost[] }>("/v1/social/feed", undefined, accessToken);
+
+export const reactToLook = (accessToken: string, postId: string) =>
+  request<{ active: boolean }>(`/v1/social/look-posts/${postId}/react`, { method: "POST", body: JSON.stringify({ kind: "INSPIRED" }) }, accessToken);
+
+export type SocialSearchAccount = {
+  id: string;
+  nickname: string;
+  handle: string;
+  avatarUri?: string | null;
+  styleMix: Array<{ styleId: string; weight: number }>;
+  privacyState: string;
+};
+
+export const searchSocialAccounts = (accessToken: string, query: string) =>
+  request<{ accounts: SocialSearchAccount[] }>(`/v1/social/search?q=${encodeURIComponent(query)}`, undefined, accessToken);
+
+export const followSocialAccount = (accessToken: string, targetAccountId: string) =>
+  request<{ status: "ACCEPTED" | "REQUESTED" }>("/v1/social/follows", { method: "POST", body: JSON.stringify({ targetAccountId }) }, accessToken);
+
+export type ConversationSummary = {
+  id: string;
+  safetyState: string;
+  lastMessageAt: string;
+  peer: { id: string; nickname: string; handle: string; avatarUri?: string | null } | null;
+  lastMessage: { body: string; createdAt: string } | null;
+};
+
+export const loadConversations = (accessToken: string) =>
+  request<{ conversations: ConversationSummary[] }>("/v1/social/conversations", undefined, accessToken);
+
+export const loadMessages = (accessToken: string, conversationId: string) =>
+  request<{ messages: DirectMessage[] }>(`/v1/social/conversations/${conversationId}/messages`, undefined, accessToken);
+
+export const sendDirectMessage = (accessToken: string, conversationId: string, body: string) =>
+  request<{ id: string; moderationState: string }>(`/v1/social/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ body }) }, accessToken);
 
 export const cutoutWardrobePhoto = async (imageBase64: string) => {
   const response = await fetch(`${VISION_URL}/v1/cutout-image`, {

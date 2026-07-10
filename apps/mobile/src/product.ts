@@ -36,50 +36,6 @@ export const demoOutfits = (styleId = "stockholm", locale: Locale = "ru") =>
     weather: { temperatureC: 17, feelsLikeC: 16, rainProbability: 0.15, windKph: 11, occasion: "school" },
   });
 
-const look = (styleId: string, index: number) => demoOutfits(styleId)[index] ?? demoOutfits(styleId)[0]!;
-
-export const DEMO_POSTS: FeedPost[] = [
-  {
-    id: "post-lina",
-    nickname: "lina",
-    handle: "@lina.layers",
-    avatarColor: "#FF91A9",
-    time: "12m",
-    caption: { ru: "взяла базу и добавила один emo-акцент 🖤", en: "kept the base clean and added one emo accent 🖤" },
-    style: "soft emo",
-    outfit: look("emo", 0),
-    reactions: 348,
-    comments: 27,
-    remixes: 43,
-  },
-  {
-    id: "post-aya",
-    nickname: "aya",
-    handle: "@aya.archive",
-    avatarColor: "#A9E4E7",
-    time: "38m",
-    caption: { ru: "школьный acubi без покупки новых вещей", en: "school acubi without buying anything new" },
-    style: "acubi",
-    outfit: look("acubi", 1),
-    reactions: 219,
-    comments: 18,
-    remixes: 61,
-  },
-  {
-    id: "post-noor",
-    nickname: "noor",
-    handle: "@noor.moves",
-    avatarColor: "#FFD27C",
-    time: "1h",
-    caption: { ru: "sporty, но с серебряным акцентом", en: "sporty, with one silver accent" },
-    style: "sporty street",
-    outfit: look("sporty", 0),
-    reactions: 504,
-    comments: 39,
-    remixes: 78,
-  },
-];
-
 export const TREND_STYLES = [
   { id: "stockholm", title: "Stockholm", change: "+24%", colors: ["#E9E4DC", "#99A0A7", "#2B2D31"] },
   { id: "soft-emo", title: "Soft emo", change: "+18%", colors: ["#17171A", "#8C273B", "#D7D2CE"] },

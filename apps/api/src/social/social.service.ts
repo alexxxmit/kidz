@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { LookPostInput, MessageInput } from "@kidz/contracts";
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import type { AccountPatchInput, LookPostInput, MessageInput } from "@kidz/contracts";
+import { and, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { AuthContext } from "../auth/auth.service.js";
@@ -27,6 +27,16 @@ export class SocialService {
     const rows = await this.database.db.select().from(socialAccounts).where(eq(socialAccounts.id, context.accountId)).limit(1);
     if (!rows[0]) throw new NotFoundException("Account not found");
     return this.withCounts(rows[0]);
+  }
+
+  async updateMe(context: AuthContext, input: AccountPatchInput) {
+    const changes: Partial<typeof socialAccounts.$inferInsert> = {};
+    if (input.nickname !== undefined) changes.nickname = input.nickname;
+    if (input.locale !== undefined) changes.locale = input.locale;
+    if (input.styleMix !== undefined) changes.styleMix = input.styleMix;
+    if (input.privacyState !== undefined) changes.privacyState = context.ageYears < 13 && input.privacyState === "PUBLIC" ? "CIRCLE" : input.privacyState;
+    if (Object.keys(changes).length) await this.database.db.update(socialAccounts).set(changes).where(eq(socialAccounts.id, context.accountId));
+    return this.me(context);
   }
 
   async search(context: AuthContext, query: string) {
@@ -169,6 +179,12 @@ export class SocialService {
       and(eq(follows.followerAccountId, targetAccountId), eq(follows.targetAccountId, context.accountId)),
     ))).limit(1);
     if (!relation[0]) throw new ForbiddenException("Chat is available only for accepted contacts");
+    const existing = await this.database.db.select({ id: conversations.id }).from(conversations).where(and(
+      ne(conversations.safetyState, "CLOSED"),
+      sql`exists(select 1 from conversation_members first_member where first_member.conversation_id = ${conversations.id} and first_member.account_id = ${context.accountId})`,
+      sql`exists(select 1 from conversation_members second_member where second_member.conversation_id = ${conversations.id} and second_member.account_id = ${targetAccountId})`,
+    )).limit(1);
+    if (existing[0]) return existing[0];
     const id = randomUUID();
     await this.database.db.transaction(async (tx) => {
       await tx.insert(conversations).values({ id });
@@ -186,9 +202,36 @@ export class SocialService {
       .select({ id: conversations.id, lastMessageAt: conversations.lastMessageAt, safetyState: conversations.safetyState })
       .from(conversationMembers)
       .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
-      .where(eq(conversationMembers.accountId, context.accountId))
-      .orderBy(desc(conversations.lastMessageAt));
-    return { conversations: mine };
+      .where(and(eq(conversationMembers.accountId, context.accountId), ne(conversations.safetyState, "CLOSED")))
+      .orderBy(desc(conversations.lastMessageAt))
+      .limit(100);
+    const enriched = await Promise.all(mine.map(async (conversation) => {
+      const peer = await this.database.db
+        .select({
+          id: socialAccounts.id,
+          nickname: socialAccounts.nickname,
+          handle: socialAccounts.handle,
+          avatarUri: socialAccounts.avatarUri,
+          styleMix: socialAccounts.styleMix,
+        })
+        .from(conversationMembers)
+        .innerJoin(socialAccounts, eq(socialAccounts.id, conversationMembers.accountId))
+        .where(and(eq(conversationMembers.conversationId, conversation.id), ne(conversationMembers.accountId, context.accountId)))
+        .limit(1);
+      const last = await this.database.db
+        .select({ body: messages.body, createdAt: messages.createdAt })
+        .from(messages)
+        .where(and(eq(messages.conversationId, conversation.id), sql`${messages.moderationState} <> 'HIDDEN'`))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+      return {
+        ...conversation,
+        lastMessageAt: conversation.lastMessageAt?.toISOString() ?? last[0]?.createdAt.toISOString() ?? new Date(0).toISOString(),
+        peer: peer[0] ?? null,
+        lastMessage: last[0] ? { body: last[0].body, createdAt: last[0].createdAt.toISOString() } : null,
+      };
+    }));
+    return { conversations: enriched };
   }
 
   async listMessages(context: AuthContext, conversationId: string) {
@@ -223,12 +266,21 @@ export class SocialService {
         and(eq(follows.followerAccountId, context.accountId), eq(follows.targetAccountId, targetAccountId)),
         and(eq(follows.followerAccountId, targetAccountId), eq(follows.targetAccountId, context.accountId)),
       ));
+      await tx.update(conversations).set({ safetyState: "CLOSED" }).where(and(
+        sql`exists(select 1 from conversation_members blocker_member where blocker_member.conversation_id = ${conversations.id} and blocker_member.account_id = ${context.accountId})`,
+        sql`exists(select 1 from conversation_members blocked_member where blocked_member.conversation_id = ${conversations.id} and blocked_member.account_id = ${targetAccountId})`,
+      ));
     });
     return { blocked: true };
   }
 
   private async requireMember(accountId: string, conversationId: string) {
-    const membership = await this.database.db.select().from(conversationMembers).where(and(eq(conversationMembers.accountId, accountId), eq(conversationMembers.conversationId, conversationId))).limit(1);
+    const membership = await this.database.db
+      .select({ accountId: conversationMembers.accountId })
+      .from(conversationMembers)
+      .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
+      .where(and(eq(conversationMembers.accountId, accountId), eq(conversationMembers.conversationId, conversationId), ne(conversations.safetyState, "CLOSED")))
+      .limit(1);
     if (!membership[0]) throw new ForbiddenException("Conversation is unavailable");
   }
 

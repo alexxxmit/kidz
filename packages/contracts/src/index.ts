@@ -239,6 +239,14 @@ export const AccountInputSchema = z.object({
 });
 export type AccountInput = z.infer<typeof AccountInputSchema>;
 
+export const AccountPatchInputSchema = z.object({
+  nickname: z.string().trim().min(2).max(30).optional(),
+  locale: LocaleSchema.optional(),
+  styleMix: z.array(StyleMixEntrySchema).min(1).max(3).optional(),
+  privacyState: PrivacyStateSchema.optional(),
+});
+export type AccountPatchInput = z.infer<typeof AccountPatchInputSchema>;
+
 export type SocialAccount = AccountInput & {
   id: string;
   ageMode: AgeMode;

@@ -1,5 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Query } from "@nestjs/common";
-import { FollowInputSchema, LookPostInputSchema, MessageInputSchema, ReactionInputSchema, ReportInputSchema } from "@kidz/contracts";
+import { BadRequestException, Body, Controller, Get, Headers, Param, Patch, Post, Query } from "@nestjs/common";
+import { AccountPatchInputSchema, FollowInputSchema, LookPostInputSchema, MessageInputSchema, ReactionInputSchema, ReportInputSchema } from "@kidz/contracts";
 import { z } from "zod";
 
 import { AuthService } from "../auth/auth.service.js";
@@ -15,6 +15,13 @@ export class SocialController {
 
   @Get("me")
   async me(@Headers("authorization") token?: string) { return this.social.me(await this.auth.require(token)); }
+
+  @Patch("me")
+  async updateMe(@Headers("authorization") token: string | undefined, @Body() body: unknown) {
+    const parsed = AccountPatchInputSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    return this.social.updateMe(await this.auth.require(token), parsed.data);
+  }
 
   @Get("search")
   async search(@Headers("authorization") token: string | undefined, @Query("q") q = "") { return this.social.search(await this.auth.require(token), q); }

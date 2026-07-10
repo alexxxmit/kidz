@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { Locale, OutfitOption } from "@kidz/contracts";
+import type { DirectMessage, Locale, LookPost, OutfitOption } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
@@ -33,7 +33,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -49,9 +49,25 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { askAiStylist, createGuestSession, cutoutWardrobePhoto, deleteAccount, publishLook } from "../src/api";
+import {
+  askAiStylist,
+  createGuestSession,
+  cutoutWardrobePhoto,
+  deleteAccount,
+  followSocialAccount,
+  loadConversations,
+  loadMessages,
+  loadSocialFeed,
+  publishLook,
+  reactToLook,
+  searchSocialAccounts,
+  sendDirectMessage,
+  updateSocialAccount,
+  type ConversationSummary,
+  type SocialSearchAccount,
+} from "../src/api";
 import { STARTER_WARDROBE } from "../src/demo";
-import { CHALLENGES, DEMO_POSTS, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
+import { CHALLENGES, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
 
 type Tab = "today" | "circle" | "create" | "closet" | "me";
@@ -71,6 +87,22 @@ const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
 const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
 const displayHandle = (handle: string) => `@${handle.replace(/^@/, "")}`;
+const avatarColors = [colors.coral, colors.cyan, colors.warm, colors.ultraviolet];
+const livePost = (post: LookPost, myHandle: string): FeedPost => ({
+  id: post.id,
+  nickname: post.author.nickname,
+  handle: displayHandle(post.author.handle),
+  avatarColor: avatarColors[post.author.handle.length % avatarColors.length]!,
+  time: new Date(post.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+  caption: { ru: post.caption, en: post.caption },
+  style: post.styleTags.join(" + ") || "remix",
+  outfit: post.outfit,
+  reactions: post.reactionCount,
+  comments: post.commentCount,
+  remixes: post.remixCount,
+  reacted: post.viewerReacted,
+  mine: post.author.handle === myHandle.replace(/^@/, ""),
+});
 const storage = {
   getToken: () => Platform.OS === "web" ? AsyncStorage.getItem(TOKEN_KEY) : SecureStore.getItemAsync(TOKEN_KEY),
   setToken: (value: string) => Platform.OS === "web" ? AsyncStorage.setItem(TOKEN_KEY, value) : SecureStore.setItemAsync(TOKEN_KEY, value),
@@ -86,7 +118,7 @@ export default function MiraApp() {
   const [tab, setTab] = useState<Tab>("today");
   const [token, setToken] = useState<string>();
   const [wardrobe, setWardrobe] = useState(wardrobePreview);
-  const [posts, setPosts] = useState(DEMO_POSTS);
+  const [posts, setPosts] = useState<FeedPost[]>([]);
   const [generated, setGenerated] = useState<OutfitOption[]>(() => demoOutfits("stockholm"));
   const [activeLook, setActiveLook] = useState(0);
   const [occasion, setOccasion] = useState("school");
@@ -101,6 +133,8 @@ export default function MiraApp() {
   const catalogStyles = useMemo(() => getStyles(locale), [locale]);
   const selectedNames = catalogStyles.filter((item) => profile.styles.includes(item.id)).map((item) => item.name);
   const currentLook = generated[activeLook] ?? generated[0];
+  const searchAccounts = useCallback(async (query: string) => token ? (await searchSocialAccounts(token, query)).accounts : [], [token]);
+  const followAccount = useCallback(async (accountId: string) => token ? (await followSocialAccount(token, accountId)).status : "REQUESTED" as const, [token]);
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken()]).then(([saved, savedToken]) => {
@@ -119,6 +153,15 @@ export default function MiraApp() {
   }, [tab]);
 
   useEffect(() => {
+    if (!token || tab !== "circle" || profile.age < 10) return;
+    let active = true;
+    void loadSocialFeed(token).then(({ posts: next }) => {
+      if (active) setPosts(next.map((post) => livePost(post, profile.handle)));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [profile.age, profile.handle, tab, token]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(undefined), 2300);
     return () => clearTimeout(timer);
@@ -133,6 +176,15 @@ export default function MiraApp() {
     setProfile(next);
     setOverlay("none");
     await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
+    if (token) {
+      await updateSocialAccount(token, {
+        nickname: next.nickname,
+        locale: next.locale,
+        styleMix: next.styles.map((styleId) => ({ styleId, weight: 1 / next.styles.length })),
+      }).catch(() => undefined);
+      generateFor(next, occasion);
+      return;
+    }
     const installId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-mira-install`;
     try {
       const session = await createGuestSession({
@@ -221,6 +273,11 @@ export default function MiraApp() {
   const toggleReaction = (postId: string) => {
     setPosts((current) => current.map((post) => post.id === postId ? { ...post, reacted: !post.reacted, reactions: post.reactions + (post.reacted ? -1 : 1) } : post));
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (token && !postId.startsWith("post-") && !postId.startsWith("mine-")) {
+      void reactToLook(token, postId).catch(() => {
+        setPosts((current) => current.map((post) => post.id === postId ? { ...post, reacted: !post.reacted, reactions: post.reactions + (post.reacted ? -1 : 1) } : post));
+      });
+    }
   };
 
   const publishCurrent = async () => {
@@ -240,15 +297,22 @@ export default function MiraApp() {
       mine: true,
     };
     setPosts((current) => [post, ...current]);
+    let synced = !token;
     if (token) {
-      void publishLook(token, {
-        outfit: currentLook,
-        caption: post.caption[locale],
-        styleTags: profile.styles,
-        visibility: profile.age < 10 ? "PRIVATE" : "CIRCLE",
-      }).catch(() => undefined);
+      try {
+        const published = await publishLook(token, {
+          outfit: currentLook,
+          caption: post.caption[locale],
+          styleTags: profile.styles,
+          visibility: profile.age < 10 ? "PRIVATE" : "CIRCLE",
+        });
+        setPosts((current) => current.map((item) => item.id === post.id ? { ...item, id: published.id } : item));
+        synced = true;
+      } catch {
+        notify(tx(locale, "Лук сохранён на устройстве · синхронизируем позже", "Look saved on device · we’ll sync it later"));
+      }
     }
-    notify(tx(locale, "Лук опубликован в твоём круге", "Look shared with your circle"));
+    if (synced) notify(tx(locale, "Лук опубликован в твоём круге", "Look shared with your circle"));
     setTab("circle");
   };
 
@@ -257,7 +321,7 @@ export default function MiraApp() {
     await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), storage.deleteToken()]);
     setToken(undefined);
     setProfile(defaultProfile);
-    setPosts(DEMO_POSTS);
+    setPosts([]);
     setOverlay("onboarding");
   };
 
@@ -292,7 +356,15 @@ export default function MiraApp() {
               />
             )}
             {tab === "circle" && (
-              <CircleScreen locale={locale} age={profile.age} posts={posts} onReact={toggleReaction} onRemix={(look) => { setGenerated([look, ...generated]); setActiveLook(0); setTab("create"); }} />
+              <CircleScreen
+                locale={locale}
+                age={profile.age}
+                posts={posts}
+                onReact={toggleReaction}
+                onRemix={(look) => { setGenerated([look, ...generated]); setActiveLook(0); setTab("create"); }}
+                onSearch={searchAccounts}
+                onFollow={followAccount}
+              />
             )}
             {tab === "create" && (
               <CreateScreen
@@ -326,7 +398,7 @@ export default function MiraApp() {
           {overlay !== "none" && (
             <View style={styles.overlay}>
               {overlay === "onboarding" && <Onboarding initial={profile} firstRun={!token} onDone={finishOnboarding} onClose={() => setOverlay("none")} />}
-              {overlay === "chat" && <ChatScreen locale={locale} age={profile.age} onClose={() => setOverlay("none")} />}
+              {overlay === "chat" && <ChatScreen locale={locale} age={profile.age} token={token} onClose={() => setOverlay("none")} />}
               {overlay === "paywall" && <Paywall locale={locale} onClose={() => setOverlay("none")} />}
             </View>
           )}
@@ -390,18 +462,35 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
   );
 }
 
-function CircleScreen({ locale, age, posts, onReact, onRemix }: { locale: Locale; age: number; posts: FeedPost[]; onReact: (id: string) => void; onRemix: (look: OutfitOption) => void }) {
+function CircleScreen({ locale, age, posts, onReact, onRemix, onSearch, onFollow }: {
+  locale: Locale;
+  age: number;
+  posts: FeedPost[];
+  onReact: (id: string) => void;
+  onRemix: (look: OutfitOption) => void;
+  onSearch: (query: string) => Promise<SocialSearchAccount[]>;
+  onFollow: (accountId: string) => Promise<"ACCEPTED" | "REQUESTED">;
+}) {
   const [search, setSearch] = useState("");
+  const [results, setResults] = useState<SocialSearchAccount[]>([]);
+  const [followed, setFollowed] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (search.trim().length < 3) { setResults([]); return; }
+    let active = true;
+    const timer = setTimeout(() => { void onSearch(search).then((accounts) => { if (active) setResults(accounts); }).catch(() => undefined); }, 280);
+    return () => { active = false; clearTimeout(timer); };
+  }, [onSearch, search]);
   if (age <= 9) return <LockedSocial locale={locale} age={age} />;
   return (
     <View>
       <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{age < 13 ? tx(locale, "ТОЛЬКО ТВОЙ КРУГ", "YOUR CIRCLE ONLY") : tx(locale, "ТВОЙ STYLE-CIRCLE", "YOUR STYLE CIRCLE")}</Text><Text style={styles.screenTitle}>{tx(locale, "Вдохновение", "Inspiration")}</Text></View><Pressable style={styles.roundSearch}><Search size={20} color={colors.graphite} /></Pressable></View>
       <View style={styles.feedTabs}><Text style={styles.feedTabActive}>{tx(locale, "Для тебя", "For you")}</Text><Text style={styles.feedTab}>{tx(locale, "Друзья", "Friends")}</Text><Text style={styles.feedTab}>{tx(locale, "Челленджи", "Challenges")}</Text></View>
       <View style={styles.searchBar}><Search size={17} color={colors.secondary} /><TextInput value={search} onChangeText={setSearch} placeholder={tx(locale, "Найти @handle или стиль", "Find @handle or a style")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View>
+      {results.length > 0 && <View style={styles.searchResults}>{results.map((account) => <View key={account.id} style={styles.searchResult}><View style={[styles.avatar, { backgroundColor: avatarColors[account.handle.length % avatarColors.length] }]}><Text style={styles.avatarLetter}>{account.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{account.nickname}</Text><Text style={styles.postHandle}>@{account.handle} · {account.styleMix.map((item) => item.styleId).join(" + ")}</Text></View><Pressable disabled={Boolean(followed[account.id])} onPress={() => { void onFollow(account.id).then((status) => setFollowed((value) => ({ ...value, [account.id]: status }))); }} style={styles.followButton}><Text style={styles.followButtonText}>{followed[account.id] ? tx(locale, "Отправлено", "Requested") : tx(locale, "В круг", "Follow")}</Text></Pressable></View>)}</View>}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendRail}>
         {TREND_STYLES.map((trend) => <View key={trend.id} style={styles.trendCard}><View style={styles.trendPalette}>{trend.colors.map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.trendName}>{trend.title}</Text><Text style={styles.trendChange}>{trend.change}</Text></View>)}
       </ScrollView>
-      <View style={styles.feedList}>{posts.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />)}</View>
+      <View style={styles.feedList}>{posts.length ? posts.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />) : <View style={styles.emptyFeed}><Sparkles size={25} color={colors.ultraviolet} /><Text style={styles.lockedTitle}>{tx(locale, "Твой круг только начинается", "Your circle starts here")}</Text><Text style={styles.lockedBody}>{tx(locale, "Найди подругу по @handle или опубликуй первый лук — без фейковых постов в ленте.", "Find a friend by @handle or share the first look — no fake posts in your feed.")}</Text></View>}</View>
     </View>
   );
 }
@@ -450,10 +539,11 @@ function ClosetScreen({ locale, wardrobe, addPhoto }: { locale: Locale; wardrobe
 }
 
 function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onPlus, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; onEdit: () => void; onPlus: () => void; onDelete: () => void }) {
+  const inspired = posts.reduce((total, post) => total + post.reactions, 0);
   return (
     <View>
       <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{profile.nickname.slice(0, 1).toUpperCase()}</Text></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль", "Edit profile")}</Text></Pressable></View>
-      <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>184</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>1.4k</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
+      <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>0</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>{inspired}</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
       <View style={styles.profileStyleCard}><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.miniLabel}>MY STYLE DNA</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text><Text style={styles.profileStyleBody}>{tx(locale, "Стиль меняется вместе с тобой. Это направление, а не ярлык.", "Your style grows with you. It is a direction, not a label.")}</Text></View>
       <View style={styles.privacyCard}><View style={styles.privacyIcon}><LockKeyhole size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{mode === "social" ? tx(locale, "Профиль виден только твоему кругу", "Only your circle sees your profile") : tx(locale, "Закрытый возрастной режим", "Age-safe private mode")}</Text><Text style={styles.privacyBody}>{tx(locale, "Возраст не показывается. Геолокация и школа никогда не публикуются.", "Your age, school and location are never shown.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
       <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитный AI, try-on и умные покупки", "Unlimited AI, try-on and smart shopping")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
@@ -493,7 +583,7 @@ function Onboarding({ initial, firstRun, onDone, onClose }: { initial: ProfileSt
       <ScrollView contentContainerStyle={styles.onboardingContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.onboardingStep}>0{step + 1} / 03</Text>
         {step === 0 && <><Text style={styles.onboardingTitle}>Choose your language</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Все стили, подсказки и интерфейс будут на выбранном языке.", "Styles, guidance and the interface follow your language.")}</Text><View style={styles.languageCards}>{(["ru", "en"] as Locale[]).map((value) => <Pressable key={value} onPress={() => setDraft((current) => ({ ...current, locale: value }))} style={[styles.languageCard, draft.locale === value && styles.languageCardActive]}><Text style={styles.languageCode}>{value.toUpperCase()}</Text><Text style={styles.languageName}>{value === "ru" ? "Русский" : "English"}</Text>{draft.locale === value && <Check size={19} color={colors.ultraviolet} />}</Pressable>)}</View></>}
-        {step === 1 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Профиль без лишних вопросов", "A profile without the friction")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Возраст меняет подсказки, приватность и доступ к social-функциям. Точная дата рождения не нужна.", "Age changes guidance, privacy and social access. We do not need your full birth date.")}</Text><View style={styles.agePicker}><Pressable onPress={() => setDraft((p) => ({ ...p, age: Math.max(0, p.age - 1) }))} style={styles.ageButton}><Minus size={20} color={colors.graphite} /></Pressable><View><Text style={styles.ageNumber}>{draft.age}</Text><Text style={styles.ageYears}>{tx(draft.locale, "лет", "years")}</Text></View><Pressable onPress={() => setDraft((p) => ({ ...p, age: Math.min(18, p.age + 1) }))} style={styles.ageButton}><Plus size={20} color={colors.graphite} /></Pressable></View><View style={styles.ageModeCard}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.ageModeText}>{draft.age < 10 ? tx(draft.locale, "Семейный режим без открытой соцсети", "Family mode without an open social feed") : draft.age < 13 ? tx(draft.locale, "Закрытый круг по invite-коду", "Private circle by invite only") : tx(draft.locale, "Social-режим, закрытый по умолчанию", "Social mode, private by default")}</Text></View><Text style={styles.inputLabel}>{tx(draft.locale, "КАК ТЕБЯ НАЗЫВАТЬ", "WHAT SHOULD WE CALL YOU")}</Text><TextInput value={draft.nickname} onChangeText={(nickname) => setDraft((p) => ({ ...p, nickname }))} style={styles.bigInput} maxLength={30} /><Text style={styles.inputLabel}>ID</Text><View style={styles.handleInput}><Text style={styles.handlePrefix}>@</Text><TextInput autoCapitalize="none" value={draft.handle} onChangeText={(handle) => setDraft((p) => ({ ...p, handle: handle.replace(/[^a-zA-Z0-9._]/g, "").toLowerCase() }))} style={styles.handleTextInput} maxLength={24} /></View></>}
+        {step === 1 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Профиль без лишних вопросов", "A profile without the friction")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Возраст меняет подсказки, приватность и доступ к social-функциям. Точная дата рождения не нужна.", "Age changes guidance, privacy and social access. We do not need your full birth date.")}</Text><View style={styles.agePicker}><Pressable disabled={!firstRun} onPress={() => setDraft((p) => ({ ...p, age: Math.max(0, p.age - 1) }))} style={[styles.ageButton, !firstRun && { opacity: 0.35 }]}><Minus size={20} color={colors.graphite} /></Pressable><View><Text style={styles.ageNumber}>{draft.age}</Text><Text style={styles.ageYears}>{tx(draft.locale, "лет", "years")}</Text></View><Pressable disabled={!firstRun} onPress={() => setDraft((p) => ({ ...p, age: Math.min(18, p.age + 1) }))} style={[styles.ageButton, !firstRun && { opacity: 0.35 }]}><Plus size={20} color={colors.graphite} /></Pressable></View><View style={styles.ageModeCard}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.ageModeText}>{draft.age < 10 ? tx(draft.locale, "Семейный режим без открытой соцсети", "Family mode without an open social feed") : draft.age < 13 ? tx(draft.locale, "Закрытый круг по invite-коду", "Private circle by invite only") : tx(draft.locale, "Social-режим, закрытый по умолчанию", "Social mode, private by default")}</Text></View><Text style={styles.inputLabel}>{tx(draft.locale, "КАК ТЕБЯ НАЗЫВАТЬ", "WHAT SHOULD WE CALL YOU")}</Text><TextInput value={draft.nickname} onChangeText={(nickname) => setDraft((p) => ({ ...p, nickname }))} style={styles.bigInput} maxLength={30} /><Text style={styles.inputLabel}>ID</Text><View style={styles.handleInput}><Text style={styles.handlePrefix}>@</Text><TextInput editable={firstRun} autoCapitalize="none" value={draft.handle} onChangeText={(handle) => setDraft((p) => ({ ...p, handle: handle.replace(/[^a-zA-Z0-9._]/g, "").toLowerCase() }))} style={[styles.handleTextInput, !firstRun && { opacity: 0.55 }]} maxLength={24} /></View></>}
         {step === 2 && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Настроим настроение", "Set the mood") : tx(draft.locale, "Стиль — это твой язык", "Style is your language")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Для маленьких детей стиль выбирает взрослый и может менять его в любой момент.", "A parent sets the direction for little ones and can change it anytime.") : tx(draft.locale, "Выбери до трёх направлений. MIRA научится смешивать их из твоих реальных вещей.", "Choose up to three directions. MIRA learns to mix them using your real clothes.")}</Text><View style={[styles.searchBar, { marginBottom: 12 }]}><Search size={17} color={colors.secondary} /><TextInput value={styleSearch} onChangeText={setStyleSearch} placeholder={tx(draft.locale, "Найти: emo, Stockholm, fairycore…", "Find: emo, Stockholm, fairycore…")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View><View style={styles.styleChoiceGrid}>{visibleCatalog.map((style) => { const selected = draft.styles.includes(style.id); return <Pressable key={style.id} onPress={() => toggleStyle(style.id)} style={[styles.styleChoice, selected && styles.styleChoiceActive]}><View style={styles.styleChoicePalette}>{style.palette.slice(0, 4).map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.styleChoiceName}>{style.name}</Text>{selected && <View style={styles.styleSelected}><Check size={12} color={colors.paper} /></View>}</Pressable>; })}</View></>}
       </ScrollView>
       <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={step === 2 && !draft.styles.length} onPress={() => step < 2 ? setStep((value) => value + 1) : void onDone(draft)} style={styles.onboardingCta}><Text style={styles.onboardingCtaText}>{step === 2 ? tx(draft.locale, "Войти в MIRA", "Enter MIRA") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
@@ -501,11 +591,51 @@ function Onboarding({ initial, firstRun, onDone, onClose }: { initial: ProfileSt
   );
 }
 
-function ChatScreen({ locale, age, onClose }: { locale: Locale; age: number; onClose: () => void }) {
-  const [selected, setSelected] = useState(false);
+function ChatScreen({ locale, age, token, onClose }: { locale: Locale; age: number; token: string | undefined; onClose: () => void }) {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [selected, setSelected] = useState<ConversationSummary>();
+  const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (age < 13 || !token) return;
+    setLoading(true);
+    void loadConversations(token).then((result) => setConversations(result.conversations)).catch(() => undefined).finally(() => setLoading(false));
+  }, [age, token]);
+
+  const openConversation = async (conversation: ConversationSummary) => {
+    if (!token) return;
+    setSelected(conversation);
+    setLoading(true);
+    try { setMessages((await loadMessages(token, conversation.id)).messages); } finally { setLoading(false); }
+  };
+
+  const submitMessage = async () => {
+    const body = message.trim();
+    if (!body || !token || !selected) return;
+    setMessage("");
+    try {
+      await sendDirectMessage(token, selected.id, body);
+      setMessages((await loadMessages(token, selected.id)).messages);
+    } catch {
+      setMessage(body);
+    }
+  };
+
   if (age < 13) return <View style={styles.fullScreen}><OverlayHeader title={tx(locale, "Сообщения", "Messages")} onClose={onClose} /><View style={styles.lockedChat}><View style={styles.lockedIcon}><LockKeyhole size={28} color={colors.ultraviolet} /></View><Text style={styles.lockedTitle}>{tx(locale, "Чат откроется с 13 лет", "Chat opens at 13")}</Text><Text style={styles.lockedBody}>{tx(locale, "До этого можно делиться луками внутри семейного пространства и закрытого круга без личных сообщений.", "Until then, looks can be shared in the family space and private circle without direct messages.")}</Text></View></View>;
-  return <View style={styles.fullScreen}><OverlayHeader title={selected ? "lina" : tx(locale, "Сообщения", "Messages")} onClose={() => selected ? setSelected(false) : onClose()} back={selected} />{selected ? <><ScrollView contentContainerStyle={styles.messageThread}><View style={styles.messageIncoming}><Text style={styles.messageText}>{tx(locale, "твой сегодняшний лук — очень да! можно remix?", "your look today is so good — can I remix it?")}</Text></View><View style={styles.messageOutgoing}><Text style={styles.messageTextOutgoing}>{tx(locale, "конечно ✦ покажи свою версию", "of course ✦ show me your version")}</Text></View><View style={styles.safetyNotice}><LockKeyhole size={13} color={colors.secondary} /><Text style={styles.safetyNoticeText}>{tx(locale, "Ссылки и личные контакты скрываются для безопасности", "Links and personal contact details are filtered for safety")}</Text></View></ScrollView><View style={styles.messageComposer}><TextInput value={message} onChangeText={setMessage} placeholder={tx(locale, "Сообщение…", "Message…")} style={styles.messageInput} /><Pressable style={styles.messageSend}><Send size={17} color={colors.paper} /></Pressable></View></> : <View style={styles.conversationList}>{[{ name: "lina", handle: "@lina.layers", text: tx(locale, "твой сегодняшний лук — очень да!", "your look today is so good!"), color: "#FF91A9" }, { name: "aya", handle: "@aya.archive", text: tx(locale, "сделала remix твоей рубашки", "remixed your shirt"), color: "#A9E4E7" }].map((item) => <Pressable key={item.handle} onPress={() => setSelected(true)} style={styles.conversationRow}><View style={[styles.avatar, { backgroundColor: item.color }]}><Text style={styles.avatarLetter}>{item.name[0]!.toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{item.name} <Text style={styles.postHandle}>{item.handle}</Text></Text><Text numberOfLines={1} style={styles.conversationText}>{item.text}</Text></View><View style={styles.unreadDot} /></Pressable>)}</View>}</View>;
+
+  return <View style={styles.fullScreen}>
+    <OverlayHeader title={selected?.peer?.nickname ?? tx(locale, "Сообщения", "Messages")} onClose={() => selected ? setSelected(undefined) : onClose()} back={Boolean(selected)} />
+    {selected ? <>
+      <ScrollView contentContainerStyle={styles.messageThread}>
+        {loading && <ActivityIndicator color={colors.ultraviolet} />}
+        {messages.map((item) => { const outgoing = item.senderAccountId !== selected.peer?.id; return <View key={item.id} style={outgoing ? styles.messageOutgoing : styles.messageIncoming}><Text style={outgoing ? styles.messageTextOutgoing : styles.messageText}>{item.body}</Text></View>; })}
+        <View style={styles.safetyNotice}><LockKeyhole size={13} color={colors.secondary} /><Text style={styles.safetyNoticeText}>{tx(locale, "Ссылки и личные контакты скрываются для безопасности", "Links and personal contact details are filtered for safety")}</Text></View>
+      </ScrollView>
+      <View style={styles.messageComposer}><TextInput value={message} onChangeText={setMessage} onSubmitEditing={submitMessage} placeholder={tx(locale, "Сообщение…", "Message…")} style={styles.messageInput} /><Pressable onPress={submitMessage} style={styles.messageSend}><Send size={17} color={colors.paper} /></Pressable></View>
+    </> : loading ? <ActivityIndicator style={{ marginTop: 60 }} color={colors.ultraviolet} /> : conversations.length ? <View style={styles.conversationList}>{conversations.map((item) => <Pressable key={item.id} onPress={() => void openConversation(item)} style={styles.conversationRow}><View style={[styles.avatar, { backgroundColor: avatarColors[(item.peer?.handle.length ?? 0) % avatarColors.length] }]}><Text style={styles.avatarLetter}>{item.peer?.nickname.slice(0, 1).toUpperCase() ?? "?"}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{item.peer?.nickname ?? "MIRA"} <Text style={styles.postHandle}>@{item.peer?.handle}</Text></Text><Text numberOfLines={1} style={styles.conversationText}>{item.lastMessage?.body ?? tx(locale, "Начните разговор с образа", "Start with a look")}</Text></View></Pressable>)}</View> : <View style={styles.lockedChat}><View style={styles.lockedIcon}><MessageCircle size={28} color={colors.ultraviolet} /></View><Text style={styles.lockedTitle}>{tx(locale, "Пока нет диалогов", "No conversations yet")}</Text><Text style={styles.lockedBody}>{token ? tx(locale, "Личные сообщения появляются только после взаимного подтверждения контакта.", "Direct messages appear only after both people approve the connection.") : tx(locale, "Подключись к MIRA, чтобы открыть безопасные сообщения.", "Connect to MIRA to open safe messaging.")}</Text></View>}
+  </View>;
 }
 
 function Paywall({ locale, onClose }: { locale: Locale; onClose: () => void }) {
@@ -594,12 +724,17 @@ const styles = StyleSheet.create({
   feedTabActive: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite, paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: colors.ultraviolet },
   searchBar: { height: 45, backgroundColor: colors.paper, borderRadius: 15, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
   searchInput: { flex: 1, fontFamily: typography.body, fontSize: 11.5, color: colors.graphite, outlineStyle: "none" } as never,
+  searchResults: { marginTop: 8, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
+  searchResult: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 11, borderBottomWidth: 1, borderBottomColor: colors.line },
+  followButton: { minWidth: 68, borderRadius: 13, backgroundColor: colors.violetMist, paddingHorizontal: 10, paddingVertical: 8, alignItems: "center" },
+  followButtonText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.ultraviolet },
   trendRail: { gap: 9, paddingVertical: 14 },
   trendCard: { width: 110, height: 78, backgroundColor: colors.paper, borderRadius: 16, overflow: "hidden", paddingBottom: 8, borderWidth: 1, borderColor: colors.line },
   trendPalette: { flexDirection: "row", height: 28 },
   trendName: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite, paddingHorizontal: 9, marginTop: 6 },
   trendChange: { position: "absolute", right: 8, bottom: 7, fontFamily: typography.bodySemibold, fontSize: 8, color: colors.success },
   feedList: { gap: 15 },
+  emptyFeed: { alignItems: "center", gap: 8, borderRadius: 22, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 28, paddingVertical: 34 },
   postCard: { backgroundColor: colors.paper, borderRadius: 24, padding: 13, borderWidth: 1, borderColor: colors.line },
   postHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 11 },
   avatar: { width: 39, height: 39, borderRadius: 14, alignItems: "center", justifyContent: "center" },
