@@ -6,10 +6,24 @@ import type {
 } from "@kidz/contracts";
 
 import { buildStylingGuidance } from "./styling.js";
+import { STYLE_CATALOG } from "./styles.js";
 
 type CandidateItem = Omit<WardrobeItemInput, "profileId"> & { id?: string };
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
+const styleTraits = new Map(STYLE_CATALOG.map((style) => [style.id, new Set(style.traits)]));
+
+const styleAffinity = (item: CandidateItem, targetStyleId: string) => {
+  if (item.styleIds.includes(targetStyleId)) return 1;
+  const target = styleTraits.get(targetStyleId);
+  if (!target?.size) return 0;
+  return item.styleIds.reduce((best, itemStyleId) => {
+    const itemTraits = styleTraits.get(itemStyleId);
+    if (!itemTraits?.size) return best;
+    const shared = [...target].filter((trait) => itemTraits.has(trait)).length;
+    return Math.max(best, (shared / target.size) * 0.68);
+  }, 0);
+};
 
 const targetWarmth = (temperatureC: number): number => {
   if (temperatureC <= 0) return 9;
@@ -25,8 +39,8 @@ const weightedStyleScore = (
 ): number => {
   const totalWeight = styleMix.reduce((sum, style) => sum + style.weight, 0) || 1;
   const score = styleMix.reduce((sum, style) => {
-    const matches = items.filter((item) => item.styleIds.includes(style.styleId)).length;
-    return sum + (matches / Math.max(items.length, 1)) * style.weight;
+    const affinity = items.reduce((itemSum, item) => itemSum + styleAffinity(item, style.styleId), 0);
+    return sum + (affinity / Math.max(items.length, 1)) * style.weight;
   }, 0);
   return clamp(score / totalWeight);
 };
@@ -49,7 +63,7 @@ const itemStyleScore = (
 ): number => {
   const totalWeight = styleMix.reduce((sum, style) => sum + style.weight, 0) || 1;
   const score = styleMix.reduce(
-    (sum, style) => sum + (item.styleIds.includes(style.styleId) ? style.weight : 0),
+    (sum, style) => sum + styleAffinity(item, style.styleId) * style.weight,
     0,
   );
   return clamp(score / totalWeight);
@@ -154,12 +168,18 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
     const rotation = clamp(
       1 - items.reduce((sum, item) => sum + ("wearCount" in item ? Number(item.wearCount) : 0), 0) / 20,
     );
-    const score =
+    const totalLookBonus = Math.min(
+      items.filter((item) => ["mid_layer", "outerwear", "headwear", "jewelry", "bag", "accessory"].includes(item.slot)).length * 0.018,
+      0.072,
+    );
+    const score = clamp(
       style * 0.31 +
       weather.score * 0.27 +
       completeness.score * 0.23 +
       styling.stylingScore * 0.11 +
-      rotation * 0.08;
+      rotation * 0.08 +
+      totalLookBonus,
+    );
     const reasonCodes = [
       style >= 0.5 ? "STYLE_MATCH" : "STYLE_EXPLORATION",
       "HAIR_DIRECTION",

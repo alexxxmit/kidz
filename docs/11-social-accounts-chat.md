@@ -198,13 +198,14 @@ Follow model:
 - POST `/v1/social/reports`
 - POST `/v1/social/blocks`
 
-## 10. Что не входит в текущий vertical slice
+## 10. Текущий статус social layer
 
-Пока social layer не реализован в UI/API. В текущем slice есть только подготовка основного объекта — `OutfitOption`, который можно будет сохранять как `look_post`.
+В product slice реализованы guest-session без пароля, уникальный handle, профиль, поиск, лента образов, публикации, реакции, комментарии, подписки и запросы, ремиксы, личные диалоги 13+, блокировки, жалобы и moderation queue. Видимость и доступ к общению ограничиваются возрастным режимом на сервере, а не только интерфейсом.
 
-Реализацию social лучше делать после:
+До публичного запуска остаются инфраструктурные и операционные задачи:
 
-1. базовой авторизации/семейного аккаунта;
-2. object storage для фото/cutout;
-3. privacy settings;
-4. moderation/report/block baseline.
+1. перенести media в object storage/CDN и выполнять sanitization загрузок;
+2. подключить push/email для родительского согласия и критичных safety-событий;
+3. провести независимый privacy/security review и нагрузочные тесты;
+4. сформировать живую команду модерации с SLA, апелляциями и escalation playbook;
+5. подключить Apple Sign in/parent account recovery после утверждения финальной модели аккаунта.

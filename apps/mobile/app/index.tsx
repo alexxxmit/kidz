@@ -1,20 +1,43 @@
-import type {
-  AutonomyMode,
-  GenderPresentation,
-  HairColor,
-  HairLength,
-  Locale,
-  OutfitOption,
-  StyleDefinition,
-  WardrobeItemInput,
-} from "@kidz/contracts";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { Locale, OutfitOption } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
+import { BlurView } from "expo-blur";
+import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import { Camera, Check, ChevronLeft, Minus, Plus, Search, Shirt, Sparkles, Trash2 } from "lucide-react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import * as SecureStore from "expo-secure-store";
+import {
+  Bell,
+  Camera,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  CircleUserRound,
+  Compass,
+  Crown,
+  Heart,
+  Home,
+  ImagePlus,
+  LockKeyhole,
+  MessageCircle,
+  Minus,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Send,
+  Shirt,
+  Shuffle,
+  Sparkles,
+  Star,
+  UserRound,
+  WandSparkles,
+  X,
+} from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -26,566 +49,723 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { persistAndGenerate } from "../src/api";
-import { PrimaryButton } from "../src/components/PrimaryButton";
-import { StepHeader } from "../src/components/StepHeader";
-import { StyleRibbon } from "../src/components/StyleRibbon";
-import { t } from "../src/copy";
-import { quickItems, STARTER_WARDROBE } from "../src/demo";
+import { askAiStylist, createGuestSession, cutoutWardrobePhoto, deleteAccount, publishLook } from "../src/api";
+import { STARTER_WARDROBE } from "../src/demo";
+import { CHALLENGES, DEMO_POSTS, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
 
-type Step = "language" | "profile" | "styles" | "wardrobe" | "outfits";
-type LocalItem = Omit<WardrobeItemInput, "profileId"> & { localId: string };
-
-const steps: Step[] = ["language", "profile", "styles", "wardrobe", "outfits"];
-const weather = { temperatureC: 8, feelsLikeC: 6, rainProbability: 0.3, windKph: 28, occasion: "school" as const };
-const genderOptions: GenderPresentation[] = ["FEMININE", "MASCULINE", "NEUTRAL", "NOT_SPECIFIED"];
-const hairLengthOptions: HairLength[] = ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"];
-const hairColorOptions: HairColor[] = ["BLACK", "DARK_BROWN", "BROWN", "LIGHT_BROWN", "BLONDE", "DYED_BRIGHT"];
-
-const autonomyForAge = (age: number): AutonomyMode => {
-  if (age <= 5) return "PARENT_DECIDES";
-  if (age <= 9) return "TOGETHER";
-  return "USER_DECIDES";
+type Tab = "today" | "circle" | "create" | "closet" | "me";
+type Overlay = "none" | "onboarding" | "chat" | "paywall";
+type ProfileState = {
+  locale: Locale;
+  age: number;
+  nickname: string;
+  handle: string;
+  styles: string[];
 };
 
-const reasonLabel = (locale: Locale, code: string) => {
-  if (code === "STYLE_MATCH") return t(locale, "styleMatch");
-  if (code === "HAIR_DIRECTION") return t(locale, "hairDirection");
-  if (code === "MAKEUP_DIRECTION") return t(locale, "makeupDirection");
-  if (code === "ACCESSORY_BALANCE") return t(locale, "accessoryBalance");
-  if (code === "ACCESSORY_IDEA") return t(locale, "accessoryIdea");
-  if (code === "COOL_WEATHER_LAYER") return t(locale, "coolLayer");
-  if (code === "COMPLETE_LOOK") return t(locale, "completeLook");
-  if (code === "PARTIAL_WARDROBE") return t(locale, "partial");
-  return code.replaceAll("_", " ").toLowerCase();
+const PROFILE_KEY = "mira.profile.v2";
+const TOKEN_KEY = "mira.session.v1";
+const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm", "emo"] };
+
+const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
+const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
+const displayHandle = (handle: string) => `@${handle.replace(/^@/, "")}`;
+const storage = {
+  getToken: () => Platform.OS === "web" ? AsyncStorage.getItem(TOKEN_KEY) : SecureStore.getItemAsync(TOKEN_KEY),
+  setToken: (value: string) => Platform.OS === "web" ? AsyncStorage.setItem(TOKEN_KEY, value) : SecureStore.setItemAsync(TOKEN_KEY, value),
+  deleteToken: () => Platform.OS === "web" ? AsyncStorage.removeItem(TOKEN_KEY) : SecureStore.deleteItemAsync(TOKEN_KEY),
 };
 
-const itemArtworkUri = (item: Pick<WardrobeItemInput, "cutoutUri" | "imageUri">) =>
-  item.cutoutUri ?? item.imageUri;
-
-const genderLabel = (locale: Locale, value: GenderPresentation) => {
-  const labels: Record<GenderPresentation, Record<Locale, string>> = {
-    FEMININE: { ru: "Женский", en: "Feminine" },
-    MASCULINE: { ru: "Мужской", en: "Masculine" },
-    NEUTRAL: { ru: "Нейтрально", en: "Neutral" },
-    NOT_SPECIFIED: { ru: "Не указывать", en: "Skip" },
-  };
-  return labels[value][locale];
-};
-
-const hairLengthLabel = (locale: Locale, value: HairLength) => {
-  const labels: Record<HairLength, Record<Locale, string>> = {
-    BUZZ: { ru: "Очень короткие", en: "Buzz" },
-    SHORT: { ru: "Короткие", en: "Short" },
-    MEDIUM: { ru: "Средние", en: "Medium" },
-    LONG: { ru: "Длинные", en: "Long" },
-    VERY_LONG: { ru: "Очень длинные", en: "Very long" },
-  };
-  return labels[value][locale];
-};
-
-const hairColorLabel = (locale: Locale, value: HairColor) => {
-  const labels: Record<HairColor, Record<Locale, string>> = {
-    BLACK: { ru: "Чёрные", en: "Black" },
-    DARK_BROWN: { ru: "Тёмный шатен", en: "Dark brown" },
-    BROWN: { ru: "Шатен", en: "Brown" },
-    LIGHT_BROWN: { ru: "Русые", en: "Light brown" },
-    BLONDE: { ru: "Блонд", en: "Blonde" },
-    RED: { ru: "Рыжие", en: "Red" },
-    GRAY: { ru: "Пепельные", en: "Ash/gray" },
-    DYED_BRIGHT: { ru: "Яркий цвет", en: "Bright color" },
-    MIXED: { ru: "Смешанный", en: "Mixed" },
-    OTHER: { ru: "Другой", en: "Other" },
-  };
-  return labels[value][locale];
-};
-
-const slotLabel = (locale: Locale, slot: keyof typeof quickItems) => {
-  const labels: Record<keyof typeof quickItems, Record<Locale, string>> = {
-    top: { ru: "верх", en: "top" },
-    bottom: { ru: "низ", en: "bottom" },
-    footwear: { ru: "обувь", en: "shoes" },
-    outerwear: { ru: "куртка", en: "outerwear" },
-    jewelry: { ru: "украшение", en: "jewelry" },
-    bag: { ru: "сумка", en: "bag" },
-    headwear: { ru: "головной убор", en: "headwear" },
-  };
-  return labels[slot][locale];
-};
-
-export default function HomeScreen() {
+export default function MiraApp() {
   const { width } = useWindowDimensions();
-  const wide = width >= 900;
+  const compact = width < 390;
+  const [hydrated, setHydrated] = useState(false);
+  const [profile, setProfile] = useState<ProfileState>(defaultProfile);
+  const [overlay, setOverlay] = useState<Overlay>("none");
+  const [tab, setTab] = useState<Tab>("today");
+  const [token, setToken] = useState<string>();
+  const [wardrobe, setWardrobe] = useState(wardrobePreview);
+  const [posts, setPosts] = useState(DEMO_POSTS);
+  const [generated, setGenerated] = useState<OutfitOption[]>(() => demoOutfits("stockholm"));
+  const [activeLook, setActiveLook] = useState(0);
+  const [occasion, setOccasion] = useState("school");
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiAnswer, setAiAnswer] = useState<string>();
+  const [aiLoading, setAiLoading] = useState(false);
+  const [toast, setToast] = useState<string>();
   const scrollRef = useRef<ScrollView>(null);
-  const [step, setStep] = useState<Step>("language");
-  const [locale, setLocale] = useState<Locale>("ru");
-  const [age, setAge] = useState(13);
-  const [autonomy, setAutonomy] = useState<AutonomyMode>("USER_DECIDES");
-  const [genderPresentation, setGenderPresentation] = useState<GenderPresentation>("NOT_SPECIFIED");
-  const [hairLength, setHairLength] = useState<HairLength>("MEDIUM");
-  const [hairColor, setHairColor] = useState<HairColor>("BLACK");
-  const [selectedStyleIds, setSelectedStyleIds] = useState(["stockholm", "emo"]);
-  const [search, setSearch] = useState("");
-  const [wardrobe, setWardrobe] = useState<LocalItem[]>([]);
-  const [outfits, setOutfits] = useState<OutfitOption[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [syncMode, setSyncMode] = useState<"online" | "local">("local");
+  const locale = profile.locale;
+  const mode = ageMode(profile.age);
+  const socialEnabled = profile.age >= 13;
+  const catalogStyles = useMemo(() => getStyles(locale), [locale]);
+  const selectedNames = catalogStyles.filter((item) => profile.styles.includes(item.id)).map((item) => item.name);
+  const currentLook = generated[activeLook] ?? generated[0];
 
-  const catalog = useMemo(() => getStyles(locale), [locale]);
-  const selectedStyles = useMemo(
-    () => catalog.filter((style) => selectedStyleIds.includes(style.id)),
-    [catalog, selectedStyleIds],
-  );
-  const visibleStyles = useMemo(() => {
-    const normalized = search.trim().toLowerCase();
-    if (!normalized) return catalog;
-    return catalog.filter((style) =>
-      [style.name, style.description, ...style.aliases].some((value) => value.toLowerCase().includes(normalized)),
-    );
-  }, [catalog, search]);
+  useEffect(() => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken()]).then(([saved, savedToken]) => {
+      if (saved) {
+        try { setProfile(JSON.parse(saved) as ProfileState); } catch { setOverlay("onboarding"); }
+      } else {
+        setOverlay("onboarding");
+      }
+      if (savedToken) setToken(savedToken);
+      setHydrated(true);
+    });
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [step]);
+  }, [tab]);
 
-  const goNext = () => {
-    const index = steps.indexOf(step);
-    if (index < steps.length - 1) setStep(steps[index + 1] ?? step);
-  };
-  const goBack = () => {
-    const index = steps.indexOf(step);
-    if (index > 0) setStep(steps[index - 1] ?? step);
-  };
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(undefined), 2300);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
-  const changeAge = (next: number) => {
-    const value = Math.max(0, Math.min(18, next));
-    setAge(value);
-    setAutonomy(autonomyForAge(value));
+  const notify = (message: string) => {
+    setToast(message);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
-  const toggleStyle = (styleId: string) => {
-    setSelectedStyleIds((current) => {
-      if (current.includes(styleId)) return current.filter((id) => id !== styleId);
-      if (current.length >= 3) return [...current.slice(1), styleId];
-      return [...current, styleId];
-    });
-  };
-
-  const addDemoWardrobe = () => {
-    setWardrobe(
-      STARTER_WARDROBE.map((item, index) => ({
-        ...item,
-        styleIds: item.styleIds.length ? item.styleIds : selectedStyleIds,
-        localId: `demo-${index}`,
-      })),
-    );
-  };
-
-  const addQuickItem = (slot: keyof typeof quickItems) => {
-    const source = quickItems[slot];
-    setWardrobe((current) => [
-      ...current,
-      { ...source, styleIds: selectedStyleIds, localId: `${slot}-${Date.now()}` },
-    ]);
-  };
-
-  const addPhoto = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 0.72,
-      allowsEditing: true,
-      aspect: [4, 5],
-    });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    const source = quickItems.top;
-    setWardrobe((current) => [
-      ...current,
-      {
-        ...source,
-        name: locale === "ru" ? "Вещь с фото" : "Photo item",
-        styleIds: selectedStyleIds,
-        imageUri: asset.uri,
-        imageProcessingState: "PENDING_CUTOUT",
-        localId: `photo-${Date.now()}`,
-      },
-    ]);
-  };
-
-  const buildOutfits = async () => {
-    setLoading(true);
-    const profile = {
-      displayName: age >= 10 ? "My style" : "Family profile",
-      locale,
-      ageYears: age,
-      autonomyMode: autonomy,
-      genderPresentation,
-      hairProfile: {
-        length: hairLength,
-        color: hairColor,
-        openToColorAdvice: true,
-      },
-      styleMix: selectedStyleIds.map((styleId) => ({ styleId, weight: 1 / selectedStyleIds.length })),
-    };
-    const items = wardrobe.map(({ localId: _localId, ...item }) => item);
+  const finishOnboarding = async (next: ProfileState) => {
+    setProfile(next);
+    setOverlay("none");
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
+    const installId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-mira-install`;
     try {
-      const result = await persistAndGenerate(profile, items, weather);
-      setOutfits(result.options);
-      setSyncMode("online");
+      const session = await createGuestSession({
+        installId,
+        nickname: next.nickname,
+        handle: next.handle.replace(/^@/, "").toLowerCase(),
+        ageYears: next.age,
+        locale: next.locale,
+        styleMix: next.styles.map((styleId) => ({ styleId, weight: 1 / next.styles.length })),
+      });
+      setToken(session.accessToken);
+      await storage.setToken(session.accessToken);
+      if (session.account.handle !== next.handle) {
+        const allocated = { ...next, handle: session.account.handle };
+        setProfile(allocated);
+        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(allocated));
+      }
     } catch {
-      setOutfits(generateOutfits({ profile, wardrobe: items, weather }));
-      setSyncMode("local");
+      // Local-first mode stays fully usable when staging or a chosen handle is unavailable.
+    }
+    generateFor(next, occasion);
+  };
+
+  const generateFor = (target = profile, nextOccasion = occasion) => {
+    const options = generateOutfits({
+      profile: {
+        displayName: target.nickname,
+        locale: target.locale,
+        ageYears: target.age,
+        autonomyMode: target.age <= 5 ? "PARENT_DECIDES" : target.age <= 9 ? "TOGETHER" : "USER_DECIDES",
+        genderPresentation: "FEMININE",
+        hairProfile: { length: "LONG", color: "DARK_BROWN", openToColorAdvice: true },
+        styleMix: target.styles.map((styleId) => ({ styleId, weight: 1 / target.styles.length })),
+      },
+      wardrobe: wardrobe.map(({ localId: _id, ...item }) => item),
+      weather: { temperatureC: 17, feelsLikeC: 16, rainProbability: 0.2, windKph: 12, occasion: nextOccasion as "school" | "walk" | "sport" | "party" | "everyday" },
+    });
+    setGenerated(options);
+    setActiveLook(0);
+  };
+
+  const askMira = async (question = aiQuestion) => {
+    const normalized = question.trim();
+    if (!normalized) return;
+    setAiLoading(true);
+    setAiQuestion(normalized);
+    try {
+      if (!token) throw new Error("local");
+      const result = await askAiStylist(token, {
+        ageYears: profile.age,
+        locale,
+        question: normalized,
+        styleMix: profile.styles.map((styleId) => ({ styleId, weight: 1 / profile.styles.length })),
+        wardrobeSummary: wardrobe.map((item) => item.name),
+        outfit: currentLook,
+      });
+      setAiAnswer(result.answer);
+    } catch {
+      setAiAnswer(tx(locale,
+        `Оставь одну главную вещь в стиле ${selectedNames[0] ?? "твоего mood"}, добавь спокойную базу и один аксессуар. Я использовала только то, что уже есть в шкафу.`,
+        `Keep one hero piece in your ${selectedNames[0] ?? "chosen"} direction, add a calm base and one accessory. I only used what is already in your closet.`,
+      ));
     } finally {
-      setLoading(false);
-      setStep("outfits");
+      setAiLoading(false);
     }
   };
 
-  const content = (
-    <View style={[styles.content, wide && styles.contentWide]}>
-      <View style={styles.mobileBrand}>
-        <Text style={styles.wordmark}>KIDZ/</Text>
-        <Text style={styles.progress}>{steps.indexOf(step) + 1}—{steps.length}</Text>
-      </View>
+  const addPhoto = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.72, allowsEditing: false, base64: true });
+    if (result.canceled || !result.assets[0]) return;
+    const source = STARTER_WARDROBE[0]!;
+    const asset = result.assets[0];
+    const localId = `photo-${Date.now()}`;
+    setWardrobe((items) => [{ ...source, name: tx(locale, "Новая вещь", "New piece"), imageUri: asset.uri, imageProcessingState: "PENDING_CUTOUT", localId }, ...items]);
+    notify(tx(locale, "Фото добавлено · AI вырезает фон", "Photo added · AI is removing the background"));
+    if (asset.base64) {
+      void cutoutWardrobePhoto(asset.base64).then((cutoutUri) => {
+        setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" } : item));
+        notify(tx(locale, "Фон вырезан · вещь готова", "Background removed · piece is ready"));
+      }).catch(() => {
+        setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageProcessingState: "CUTOUT_FAILED" } : item));
+      });
+    }
+  };
 
-      {step !== "language" && (
-        <Pressable onPress={goBack} accessibilityRole="button" style={styles.backButton}>
-          <ChevronLeft size={18} color={colors.graphite} />
-          <Text style={styles.backText}>{t(locale, "back")}</Text>
-        </Pressable>
-      )}
+  const toggleReaction = (postId: string) => {
+    setPosts((current) => current.map((post) => post.id === postId ? { ...post, reacted: !post.reacted, reactions: post.reactions + (post.reacted ? -1 : 1) } : post));
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
 
-      {step === "language" && (
-        <View>
-          <StepHeader step={1} eyebrow={t(locale, "languageEyebrow")} title={t(locale, "languageTitle")} body={t(locale, "languageBody")} />
-          <View style={styles.languageGrid}>
-            {(["ru", "en"] as Locale[]).map((item) => (
-              <Pressable key={item} onPress={() => setLocale(item)} style={[styles.languageCard, locale === item && styles.languageCardSelected]}>
-                <Text style={styles.languageCode}>{item.toUpperCase()}</Text>
-                <Text style={styles.languageName}>{item === "ru" ? "Русский" : "English"}</Text>
-                {locale === item && <Check size={20} color={colors.ultraviolet} />}
-              </Pressable>
-            ))}
-          </View>
-          <PrimaryButton label={t(locale, "next")} onPress={goNext} />
-        </View>
-      )}
+  const publishCurrent = async () => {
+    if (!currentLook) return;
+    const post: FeedPost = {
+      id: `mine-${Date.now()}`,
+      nickname: profile.nickname,
+      handle: displayHandle(profile.handle),
+      avatarColor: colors.ultraviolet,
+      time: tx(locale, "сейчас", "now"),
+      caption: { ru: "мой сегодняшний remix ✦", en: "today's remix ✦" },
+      style: selectedNames.join(" + "),
+      outfit: currentLook,
+      reactions: 0,
+      comments: 0,
+      remixes: 0,
+      mine: true,
+    };
+    setPosts((current) => [post, ...current]);
+    if (token) {
+      void publishLook(token, {
+        outfit: currentLook,
+        caption: post.caption[locale],
+        styleTags: profile.styles,
+        visibility: profile.age < 10 ? "PRIVATE" : "CIRCLE",
+      }).catch(() => undefined);
+    }
+    notify(tx(locale, "Лук опубликован в твоём круге", "Look shared with your circle"));
+    setTab("circle");
+  };
 
-      {step === "profile" && (
-        <View>
-          <StepHeader step={2} eyebrow={t(locale, "profileEyebrow")} title={t(locale, "profileTitle")} body={t(locale, "profileBody")} />
-          <View style={styles.agePanel}>
-            <Text style={styles.fieldLabel}>{t(locale, "age")}</Text>
-            <View style={styles.ageControls}>
-              <Pressable style={styles.squareControl} onPress={() => changeAge(age - 1)}><Minus size={20} color={colors.graphite} /></Pressable>
-              <Text style={styles.ageValue}>{age}</Text>
-              <Pressable style={styles.squareControl} onPress={() => changeAge(age + 1)}><Plus size={20} color={colors.graphite} /></Pressable>
-            </View>
-            <View style={styles.ageTrack}>
-              <View style={[styles.ageTrackFill, { width: `${(age / 18) * 100}%` }]} />
-            </View>
-            <View style={styles.ageLabels}><Text style={styles.utility}>0</Text><Text style={styles.utility}>6</Text><Text style={styles.utility}>10</Text><Text style={styles.utility}>18</Text></View>
-          </View>
-          <View style={{ gap: 10, marginBottom: 24 }}>
-            {([
-              ["PARENT_DECIDES", "parentDecides", "parentDecidesBody"],
-              ["TOGETHER", "together", "togetherBody"],
-              ["USER_DECIDES", "userDecides", "userDecidesBody"],
-            ] as const).map(([value, titleKey, bodyKey]) => (
-              <Pressable key={value} onPress={() => setAutonomy(value)} style={[styles.choiceRow, autonomy === value && styles.choiceRowSelected]}>
-                <View style={[styles.radio, autonomy === value && styles.radioSelected]}>{autonomy === value && <View style={styles.radioDot} />}</View>
-                <View style={{ flex: 1 }}><Text style={styles.choiceTitle}>{t(locale, titleKey)}</Text><Text style={styles.choiceBody}>{t(locale, bodyKey)}</Text></View>
-              </Pressable>
-            ))}
-          </View>
-          <View style={styles.totalLookPanel}>
-            <Text style={styles.fieldLabel}>{t(locale, "appearanceTitle")}</Text>
-            <Text style={styles.totalLookIntro}>{t(locale, "appearanceBody")}</Text>
+  const removeAccount = async () => {
+    if (token) await deleteAccount(token).catch(() => undefined);
+    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), storage.deleteToken()]);
+    setToken(undefined);
+    setProfile(defaultProfile);
+    setPosts(DEMO_POSTS);
+    setOverlay("onboarding");
+  };
 
-            <Text style={styles.smallSectionLabel}>{t(locale, "genderPresentation")}</Text>
-            <View style={styles.chipGrid}>
-              {genderOptions.map((option) => (
-                <Pressable
-                  key={option}
-                  onPress={() => setGenderPresentation(option)}
-                  style={[styles.segmentChip, genderPresentation === option && styles.segmentChipSelected]}
-                >
-                  <Text style={[styles.segmentChipText, genderPresentation === option && styles.segmentChipTextSelected]}>{genderLabel(locale, option)}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.smallSectionLabel}>{t(locale, "hairLength")}</Text>
-            <View style={styles.chipGrid}>
-              {hairLengthOptions.map((option) => (
-                <Pressable
-                  key={option}
-                  onPress={() => setHairLength(option)}
-                  style={[styles.segmentChip, hairLength === option && styles.segmentChipSelected]}
-                >
-                  <Text style={[styles.segmentChipText, hairLength === option && styles.segmentChipTextSelected]}>{hairLengthLabel(locale, option)}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.smallSectionLabel}>{t(locale, "hairColor")}</Text>
-            <View style={styles.chipGrid}>
-              {hairColorOptions.map((option) => (
-                <Pressable
-                  key={option}
-                  onPress={() => setHairColor(option)}
-                  style={[styles.colorChip, hairColor === option && styles.segmentChipSelected]}
-                >
-                  <Text style={[styles.segmentChipText, hairColor === option && styles.segmentChipTextSelected]}>{hairColorLabel(locale, option)}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-          <PrimaryButton label={t(locale, "next")} onPress={goNext} />
-        </View>
-      )}
-
-      {step === "styles" && (
-        <View>
-          <StepHeader step={3} eyebrow={t(locale, "styleEyebrow")} title={t(locale, "styleTitle")} body={t(locale, "styleBody")} />
-          <View style={styles.mixPanel}>
-            <StyleRibbon styles={selectedStyles} />
-            <View style={styles.mixContent}>
-              <Text style={styles.fieldLabel}>{t(locale, "selected")} · {selectedStyleIds.length}/3</Text>
-              <Text style={styles.mixText}>{selectedStyles.map((style) => style.name).join(" + ") || "—"}</Text>
-            </View>
-          </View>
-          <View style={styles.searchBox}><Search size={18} color={colors.secondary} /><TextInput value={search} onChangeText={setSearch} placeholder={t(locale, "searchStyle")} placeholderTextColor="#9A9EA8" style={styles.searchInput} /></View>
-          <View style={styles.styleGrid}>
-            {visibleStyles.map((style) => {
-              const selected = selectedStyleIds.includes(style.id);
-              return (
-                <Pressable key={style.id} onPress={() => toggleStyle(style.id)} style={[styles.styleCard, selected && styles.styleCardSelected]}>
-                  <View style={styles.paletteRow}>{style.palette.map((color) => <View key={color} style={{ flex: 1, height: 6, backgroundColor: color }} />)}</View>
-                  <Text style={styles.styleName}>{style.name}</Text>
-                  <Text numberOfLines={2} style={styles.styleDescription}>{style.description}</Text>
-                  <View style={[styles.styleCheck, selected && styles.styleCheckSelected]}>{selected && <Check size={14} color={colors.paper} />}</View>
-                </Pressable>
-              );
-            })}
-          </View>
-          <PrimaryButton label={t(locale, "next")} onPress={goNext} disabled={!selectedStyleIds.length} />
-        </View>
-      )}
-
-      {step === "wardrobe" && (
-        <View>
-          <StepHeader step={4} eyebrow={t(locale, "wardrobeEyebrow")} title={t(locale, "wardrobeTitle")} body={t(locale, "wardrobeBody")} />
-          <View style={styles.actionPair}>
-            <Pressable onPress={addPhoto} style={styles.photoAction}><Camera size={22} color={colors.paper} /><Text style={styles.photoActionText}>{t(locale, "addPhoto")}</Text></Pressable>
-            <Pressable onPress={addDemoWardrobe} style={styles.demoAction}><Sparkles size={21} color={colors.ultraviolet} /><Text style={styles.demoActionText}>{t(locale, "addDemo")}</Text></Pressable>
-          </View>
-          <Text style={[styles.fieldLabel, { marginTop: 22, marginBottom: 9 }]}>{t(locale, "quickAdd")}</Text>
-          <View style={styles.quickRow}>
-            {(["top", "bottom", "footwear", "outerwear", "jewelry", "bag", "headwear"] as const).map((slot) => (
-              <Pressable key={slot} onPress={() => addQuickItem(slot)} style={styles.quickChip}><Plus size={14} color={colors.graphite} /><Text style={styles.quickText}>{slotLabel(locale, slot)}</Text></Pressable>
-            ))}
-          </View>
-          <View style={styles.wardrobeList}>
-            {!wardrobe.length && <View style={styles.emptyState}><Shirt size={28} color="#9AA0AA" /><Text style={styles.emptyText}>{t(locale, "wardrobeEmpty")}</Text></View>}
-            {wardrobe.map((item) => (
-              <View key={item.localId} style={styles.garmentRow}>
-                {itemArtworkUri(item) ? <Image source={{ uri: itemArtworkUri(item)! }} style={styles.garmentImage} /> : <View style={[styles.garmentSwatch, { backgroundColor: item.colors[0] ?? colors.powder }]}><Shirt size={19} color={colors.paper} /></View>}
-                <View style={{ flex: 1 }}><Text style={styles.garmentName}>{item.name}</Text><Text style={styles.garmentMeta}>{item.slot} · warmth {item.warmth}/4{item.imageProcessingState === "PENDING_CUTOUT" ? ` · ${t(locale, "cutoutPending")}` : ""}</Text></View>
-                <Pressable onPress={() => setWardrobe((current) => current.filter((currentItem) => currentItem.localId !== item.localId))} hitSlop={10}><Trash2 size={18} color="#9A5B57" /></Pressable>
-              </View>
-            ))}
-          </View>
-          <PrimaryButton label={loading ? t(locale, "loading") : t(locale, "buildLooks")} onPress={buildOutfits} disabled={loading || wardrobe.length < 3} />
-        </View>
-      )}
-
-      {step === "outfits" && (
-        <View>
-          <StepHeader step={5} eyebrow={t(locale, "outfitsEyebrow")} title={t(locale, "outfitsTitle")} body={t(locale, "outfitsBody")} />
-          <View style={[styles.syncBanner, syncMode === "online" && styles.syncBannerOnline]}>
-            <View style={[styles.syncDot, syncMode === "online" && styles.syncDotOnline]} />
-            <View style={{ flex: 1 }}><Text style={styles.syncTitle}>{t(locale, syncMode === "online" ? "onlineMode" : "localMode")}</Text>{syncMode === "local" && <Text style={styles.syncBody}>{t(locale, "localModeBody")}</Text>}</View>
-          </View>
-          {loading ? <ActivityIndicator size="large" color={colors.ultraviolet} /> : (
-            <View style={{ gap: 16 }}>
-              {outfits.map((option, index) => (
-                <View key={option.id} style={styles.outfitCard}>
-                  <View style={styles.outfitTopline}><Text style={styles.outfitNumber}>{t(locale, "look")} 0{index + 1}</Text><Text style={styles.outfitScore}>{Math.round(option.score * 100)}%</Text></View>
-                  <View style={styles.flatLay}>
-                    {option.items.map((item, itemIndex) => (
-                      <View key={`${item.name}-${itemIndex}`} style={[styles.flatLayItem, { transform: [{ rotate: `${(itemIndex % 2 ? 1 : -1) * (2 + itemIndex)}deg` }] }]}>
-                        {itemArtworkUri(item) ? (
-                          <View style={styles.itemImageFrame}>
-                            <Image source={{ uri: itemArtworkUri(item)! }} style={styles.itemImage} />
-                          </View>
-                        ) : (
-                          <View style={[styles.itemColor, { backgroundColor: item.colors[0] ?? colors.powder }]} />
-                        )}
-                        <Text numberOfLines={2} style={styles.flatLayName}>{item.name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  <View style={styles.stylingPanel}>
-                    <Text style={styles.stylingTitle}>{option.hair.title}</Text>
-                    <Text style={styles.stylingBody}>{option.hair.detail}</Text>
-                    {option.hair.colorAdvice && <Text style={styles.colorAdvice}>{option.hair.colorAdvice}</Text>}
-                    {option.makeup && (
-                      <>
-                        <Text style={[styles.stylingTitle, { marginTop: 4 }]}>{option.makeup.title}</Text>
-                        <Text style={styles.stylingBody}>{option.makeup.detail}</Text>
-                      </>
-                    )}
-                    <View style={styles.stylingSuggestionGrid}>
-                      {option.stylingSuggestions.slice(0, 3).map((suggestion) => (
-                        <View key={`${option.id}-${suggestion.reasonCode}`} style={styles.stylingSuggestion}>
-                          <Text style={styles.stylingSuggestionTitle}>{suggestion.title}</Text>
-                          <Text style={styles.stylingSuggestionBody}>{suggestion.detail}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                  <View style={styles.reasonList}>{option.reasonCodes.slice(0, 4).map((reason) => <View key={reason} style={styles.reasonRow}><View style={styles.reasonBullet} /><Text style={styles.reasonText}>{reasonLabel(locale, reason)}</Text></View>)}</View>
-                  <Pressable style={styles.chooseButton}><Text style={styles.chooseText}>{t(locale, "choose")}</Text><ArrowIcon /></Pressable>
-                </View>
-              ))}
-            </View>
-          )}
-          <Pressable onPress={() => setStep("wardrobe")} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>{t(locale, "newSet")}</Text></Pressable>
-        </View>
-      )}
-    </View>
-  );
+  if (!hydrated) return <View style={styles.loading}><Text style={styles.wordmark}>MIRA</Text></View>;
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={[styles.shell, wide && styles.shellWide]}>
-        {wide && (
-          <View style={styles.brandPanel}>
-            <View><Text style={styles.wordmarkLarge}>KIDZ/</Text><Text style={styles.brandLine}>{t(locale, "brandLine")}</Text></View>
-            <View style={styles.posterRail}>{selectedStyles.length ? <StyleRibbon styles={selectedStyles} /> : <StyleRibbon styles={catalog.slice(0, 3)} />}<Text style={styles.posterText}>0—18{Platform.OS === "web" ? "\n" : " "}STYLE{Platform.OS === "web" ? "\n" : " "}SYSTEM</Text></View>
-            <Text style={styles.brandFoot}>WARDROBE / WEATHER / YOU</Text>
-          </View>
-        )}
-        <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">{content}</ScrollView>
+      <View style={[styles.desktopStage, width > 720 && styles.desktopStageWide]}>
+        <View style={[styles.phone, width > 720 && styles.phoneWide]}>
+          <AppHeader
+            locale={locale}
+            profile={profile}
+            socialEnabled={socialEnabled}
+            onChat={() => setOverlay("chat")}
+            onPlus={() => setOverlay("paywall")}
+          />
+          <ScrollView ref={scrollRef} style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {tab === "today" && (
+              <TodayScreen
+                locale={locale}
+                profile={profile}
+                mode={mode}
+                styleNames={selectedNames}
+                look={currentLook}
+                aiQuestion={aiQuestion}
+                aiAnswer={aiAnswer}
+                aiLoading={aiLoading}
+                setAiQuestion={setAiQuestion}
+                askMira={askMira}
+                onCreate={() => setTab("create")}
+                onPublish={publishCurrent}
+              />
+            )}
+            {tab === "circle" && (
+              <CircleScreen locale={locale} age={profile.age} posts={posts} onReact={toggleReaction} onRemix={(look) => { setGenerated([look, ...generated]); setActiveLook(0); setTab("create"); }} />
+            )}
+            {tab === "create" && (
+              <CreateScreen
+                locale={locale}
+                styleNames={selectedNames}
+                occasion={occasion}
+                setOccasion={(value) => { setOccasion(value); generateFor(profile, value); }}
+                outfits={generated}
+                activeLook={activeLook}
+                setActiveLook={setActiveLook}
+                regenerate={() => generateFor()}
+                publish={publishCurrent}
+              />
+            )}
+            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} addPhoto={addPhoto} />}
+            {tab === "me" && (
+              <ProfileScreen
+                locale={locale}
+                profile={profile}
+                mode={mode}
+                styleNames={selectedNames}
+                posts={posts.filter((post) => post.mine)}
+                onEdit={() => setOverlay("onboarding")}
+                onPlus={() => setOverlay("paywall")}
+                onDelete={removeAccount}
+              />
+            )}
+          </ScrollView>
+          <BottomNav locale={locale} active={tab} onChange={setTab} />
+          {toast && <View style={styles.toast}><Check size={16} color={colors.paper} /><Text style={styles.toastText}>{toast}</Text></View>}
+          {overlay !== "none" && (
+            <View style={styles.overlay}>
+              {overlay === "onboarding" && <Onboarding initial={profile} firstRun={!token} onDone={finishOnboarding} onClose={() => setOverlay("none")} />}
+              {overlay === "chat" && <ChatScreen locale={locale} age={profile.age} onClose={() => setOverlay("none")} />}
+              {overlay === "paywall" && <Paywall locale={locale} onClose={() => setOverlay("none")} />}
+            </View>
+          )}
+        </View>
       </View>
     </SafeAreaView>
   );
 }
 
-function ArrowIcon() {
-  return <View style={styles.miniArrow}><Text style={{ color: colors.paper, fontSize: 18 }}>→</Text></View>;
+function AppHeader({ locale, profile, socialEnabled, onChat, onPlus }: { locale: Locale; profile: ProfileState; socialEnabled: boolean; onChat: () => void; onPlus: () => void }) {
+  return (
+    <View style={styles.header}>
+      <View><Text style={styles.wordmark}>MIRA</Text><Text style={styles.headerSub}>{displayHandle(profile.handle)}</Text></View>
+      <View style={styles.headerActions}>
+        <Pressable style={styles.plusBadge} onPress={onPlus}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.plusBadgeText}>PLUS</Text></Pressable>
+        <Pressable accessibilityLabel={tx(locale, "Сообщения", "Messages")} style={styles.iconButton} onPress={onChat}>{socialEnabled ? <MessageCircle size={20} color={colors.graphite} /> : <LockKeyhole size={18} color={colors.secondary} />}</Pressable>
+        <Pressable accessibilityLabel={tx(locale, "Уведомления", "Notifications")} style={styles.iconButton}><Bell size={19} color={colors.graphite} /></Pressable>
+      </View>
+    </View>
+  );
 }
+
+function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onCreate, onPublish }: {
+  locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; look: OutfitOption | undefined; aiQuestion: string; aiAnswer: string | undefined; aiLoading: boolean; setAiQuestion: (v: string) => void; askMira: (q?: string) => void; onCreate: () => void; onPublish: () => void;
+}) {
+  return (
+    <View>
+      <View style={styles.greetingRow}>
+        <View style={{ flex: 1 }}><Text style={styles.eyebrow}>{tx(locale, "ТВОЙ ДЕНЬ · 17°", "YOUR DAY · 17°")}</Text><Text style={styles.heroTitle}>{tx(locale, `Привет, ${profile.nickname}`, `Hey, ${profile.nickname}`)}</Text></View>
+        <View style={styles.weatherOrb}><Text style={styles.weatherEmoji}>☼</Text><Text style={styles.weatherTemp}>17°</Text></View>
+      </View>
+      <Text style={styles.lead}>{mode === "family" ? tx(locale, "Спокойный и практичный образ на сегодня уже готов.", "A practical, comfortable look is ready.") : tx(locale, "Какую версию себя выбираешь сегодня?", "Which version of you feels right today?")}</Text>
+      <View style={styles.styleDna}>
+        <View style={styles.styleStripe}>{["#C9C2B8", "#222126", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View>
+        <View style={styles.styleDnaCopy}><Text style={styles.miniLabel}>STYLE DNA</Text><Text numberOfLines={1} style={styles.styleDnaName}>{styleNames.join(" + ")}</Text></View>
+        <ChevronRight size={18} color={colors.graphite} />
+      </View>
+      {look && (
+        <View style={styles.heroLookCard}>
+          <LinearGradient colors={["#ECE8FF", "#F7E9F0", "#E7F5F5"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+          <View style={styles.heroLookTop}><View><Text style={styles.miniLabel}>{tx(locale, "MIRA ПОДОБРАЛА", "MIRA PICKED")}</Text><Text style={styles.lookMood}>{styleNames[0] ?? "your style"}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>{Math.round(look.score * 100)}%</Text></View></View>
+          <OutfitCanvas look={look} large />
+          <View style={styles.heroActions}>
+            <Pressable onPress={onCreate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Изменить", "Remix")}</Text></Pressable>
+            <Pressable onPress={onPublish} style={styles.primaryAction}><Text style={styles.primaryActionText}>{tx(locale, "Это мой лук", "Wear this")}</Text><ChevronRight size={17} color={colors.paper} /></Pressable>
+          </View>
+        </View>
+      )}
+      <SectionTitle title={tx(locale, "Спроси MIRA", "Ask MIRA")} action="AI" />
+      <View style={styles.aiCard}>
+        <View style={styles.aiIdentity}><View style={styles.aiMark}><WandSparkles size={18} color={colors.paper} /></View><View><Text style={styles.aiName}>MIRA AI</Text><Text style={styles.aiStatus}>{profile.age < 13 ? tx(locale, "приватный режим", "private mode") : tx(locale, "твой стилист онлайн", "your stylist is online")}</Text></View></View>
+        {aiAnswer && <Text style={styles.aiAnswer}>{aiAnswer}</Text>}
+        <View style={styles.aiComposer}><TextInput value={aiQuestion} onChangeText={setAiQuestion} onSubmitEditing={() => askMira()} placeholder={tx(locale, "Например: сделай образ смелее", "Try: make this look bolder")} placeholderTextColor="#A09AAA" style={styles.aiInput} /><Pressable onPress={() => askMira()} style={styles.aiSend}>{aiLoading ? <ActivityIndicator color={colors.paper} size="small" /> : <Send size={16} color={colors.paper} />}</Pressable></View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickPrompts}>
+          {[tx(locale, "В школу", "For school"), tx(locale, "Смелее", "Bolder"), tx(locale, "Добавь аксессуар", "Add an accessory")].map((prompt) => <Pressable key={prompt} onPress={() => { setAiQuestion(prompt); askMira(prompt); }} style={styles.promptChip}><Text style={styles.promptChipText}>{prompt}</Text></Pressable>)}
+        </ScrollView>
+      </View>
+      <SectionTitle title={tx(locale, "Челлендж недели", "Weekly challenge")} action={tx(locale, "Все", "See all")} />
+      <View style={styles.challengeCard}><View style={styles.challengeIcon}><Star size={21} color={colors.graphite} /></View><View style={{ flex: 1 }}><Text style={styles.challengeTitle}>{CHALLENGES[0]!.title[locale]}</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: "66%" }]} /></View><Text style={styles.challengeMeta}>2/3 · +120 ✦</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
+    </View>
+  );
+}
+
+function CircleScreen({ locale, age, posts, onReact, onRemix }: { locale: Locale; age: number; posts: FeedPost[]; onReact: (id: string) => void; onRemix: (look: OutfitOption) => void }) {
+  const [search, setSearch] = useState("");
+  if (age <= 9) return <LockedSocial locale={locale} age={age} />;
+  return (
+    <View>
+      <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{age < 13 ? tx(locale, "ТОЛЬКО ТВОЙ КРУГ", "YOUR CIRCLE ONLY") : tx(locale, "ТВОЙ STYLE-CIRCLE", "YOUR STYLE CIRCLE")}</Text><Text style={styles.screenTitle}>{tx(locale, "Вдохновение", "Inspiration")}</Text></View><Pressable style={styles.roundSearch}><Search size={20} color={colors.graphite} /></Pressable></View>
+      <View style={styles.feedTabs}><Text style={styles.feedTabActive}>{tx(locale, "Для тебя", "For you")}</Text><Text style={styles.feedTab}>{tx(locale, "Друзья", "Friends")}</Text><Text style={styles.feedTab}>{tx(locale, "Челленджи", "Challenges")}</Text></View>
+      <View style={styles.searchBar}><Search size={17} color={colors.secondary} /><TextInput value={search} onChangeText={setSearch} placeholder={tx(locale, "Найти @handle или стиль", "Find @handle or a style")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendRail}>
+        {TREND_STYLES.map((trend) => <View key={trend.id} style={styles.trendCard}><View style={styles.trendPalette}>{trend.colors.map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.trendName}>{trend.title}</Text><Text style={styles.trendChange}>{trend.change}</Text></View>)}
+      </ScrollView>
+      <View style={styles.feedList}>{posts.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />)}</View>
+    </View>
+  );
+}
+
+function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: FeedPost; onReact: () => void; onRemix: () => void }) {
+  return (
+    <View style={styles.postCard}>
+      <View style={styles.postHeader}><View style={[styles.avatar, { backgroundColor: post.avatarColor }]}><Text style={styles.avatarLetter}>{post.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{post.nickname} <Text style={styles.postHandle}>{post.handle}</Text></Text><Text style={styles.postTime}>{post.time} · {post.style}</Text></View><MoreHorizontal size={20} color={colors.secondary} /></View>
+      <View style={styles.postCanvas}><LinearGradient colors={["#F0ECFF", "#F9EDF0"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={post.outfit} /></View>
+      <Text style={styles.postCaption}>{post.caption[locale]}</Text>
+      <View style={styles.postActions}><Pressable onPress={onReact} style={styles.socialAction}><Heart size={20} color={post.reacted ? colors.coral : colors.graphite} fill={post.reacted ? colors.coral : "transparent"} /><Text style={styles.socialCount}>{post.reactions}</Text></Pressable><View style={styles.socialAction}><MessageCircle size={19} color={colors.graphite} /><Text style={styles.socialCount}>{post.comments}</Text></View><Pressable onPress={onRemix} style={styles.remixButton}><Shuffle size={15} color={colors.ultraviolet} /><Text style={styles.remixText}>{tx(locale, "Ремикс", "Remix")} · {post.remixes}</Text></Pressable></View>
+    </View>
+  );
+}
+
+function CreateScreen({ locale, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish }: { locale: Locale; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void }) {
+  const look = outfits[activeLook];
+  return (
+    <View>
+      <Text style={styles.eyebrow}>{tx(locale, "AI LOOK LAB", "AI LOOK LAB")}</Text><Text style={styles.screenTitle}>{tx(locale, "Собери настроение", "Build a mood")}</Text><Text style={styles.lead}>{tx(locale, "MIRA использует только вещи из твоего шкафа. Ты решаешь, что оставить.", "MIRA uses only your real closet. You decide what stays.")}</Text>
+      <Text style={styles.fieldCaption}>{tx(locale, "КУДА СОБИРАЕМСЯ?", "WHAT'S THE PLAN?")}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionRail}>
+        {[["school", "🎒", tx(locale, "Школа", "School")], ["walk", "☕", tx(locale, "Прогулка", "Out")], ["party", "✦", tx(locale, "Вечеринка", "Party")], ["sport", "⚡", tx(locale, "Спорт", "Sport")]].map(([id, emoji, label]) => <Pressable key={id} onPress={() => setOccasion(id!)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><Text style={styles.occasionEmoji}>{emoji}</Text><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
+      </ScrollView>
+      <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
+      {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><View style={styles.lookAdvice}><Text style={styles.lookAdviceTitle}>{look.hair.title}</Text><Text numberOfLines={2} style={styles.lookAdviceBody}>{look.hair.detail}</Text></View></View>}
+      <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
+      <View style={styles.builderActions}><Pressable onPress={regenerate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Ещё варианты", "New options")}</Text></Pressable><Pressable onPress={publish} style={styles.primaryAction}><ImagePlus size={17} color={colors.paper} /><Text style={styles.primaryActionText}>{tx(locale, "Опубликовать", "Share look")}</Text></Pressable></View>
+      <View style={styles.tipCard}><WandSparkles size={19} color={colors.ultraviolet} /><Text style={styles.tipText}>{tx(locale, "Нажми на вещь в готовом образе, чтобы заменить только её — остальной mood сохранится.", "Tap a piece to swap only that item while keeping the mood.")}</Text></View>
+    </View>
+  );
+}
+
+function ClosetScreen({ locale, wardrobe, addPhoto }: { locale: Locale; wardrobe: typeof wardrobePreview; addPhoto: () => void }) {
+  const [filter, setFilter] = useState("all");
+  const visible = filter === "all" ? wardrobe : wardrobe.filter((item) => item.slot === filter);
+  return (
+    <View>
+      <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{tx(locale, "ТВОИ РЕАЛЬНЫЕ ВЕЩИ", "YOUR REAL PIECES")}</Text><Text style={styles.screenTitle}>{tx(locale, "Шкаф", "Closet")}</Text></View><Pressable onPress={addPhoto} style={styles.addRound}><Plus size={22} color={colors.paper} /></Pressable></View>
+      <View style={styles.closetStats}><View><Text style={styles.statValue}>{wardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>86%</Text><Text style={styles.statLabel}>{tx(locale, "носятся", "in rotation")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>42</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
+      <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Сфотографируй вещь", "Photograph a piece")}</Text><Text style={styles.scanBody}>{tx(locale, "AI вырежет фон и заполнит карточку", "AI removes the background and fills the details")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>{[["all", tx(locale, "Все", "All")], ["top", tx(locale, "Верх", "Tops")], ["bottom", tx(locale, "Низ", "Bottoms")], ["footwear", tx(locale, "Обувь", "Shoes")], ["bag", tx(locale, "Сумки", "Bags")], ["jewelry", tx(locale, "Украшения", "Jewelry")]].map(([id, label]) => <Pressable key={id} onPress={() => setFilter(id!)} style={[styles.filterChip, filter === id && styles.filterChipActive]}><Text style={[styles.filterText, filter === id && styles.filterTextActive]}>{label}</Text></Pressable>)}</ScrollView>
+      <View style={styles.closetGrid}>{visible.map((item) => <View key={item.localId} style={styles.closetItem}><View style={[styles.closetArt, { backgroundColor: item.colors[0] ?? colors.violetMist }]}>{item.imageUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <Shirt size={31} color={"#FFFFFFCC"} />}{item.imageProcessingState === "PENDING_CUTOUT" && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>AI</Text></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={styles.closetMeta}>{item.careState === "CLEAN" ? tx(locale, "готово", "ready") : item.careState.toLowerCase()}</Text></View>)}</View>
+    </View>
+  );
+}
+
+function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onPlus, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; onEdit: () => void; onPlus: () => void; onDelete: () => void }) {
+  return (
+    <View>
+      <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{profile.nickname.slice(0, 1).toUpperCase()}</Text></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль", "Edit profile")}</Text></Pressable></View>
+      <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>184</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>1.4k</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
+      <View style={styles.profileStyleCard}><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.miniLabel}>MY STYLE DNA</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text><Text style={styles.profileStyleBody}>{tx(locale, "Стиль меняется вместе с тобой. Это направление, а не ярлык.", "Your style grows with you. It is a direction, not a label.")}</Text></View>
+      <View style={styles.privacyCard}><View style={styles.privacyIcon}><LockKeyhole size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{mode === "social" ? tx(locale, "Профиль виден только твоему кругу", "Only your circle sees your profile") : tx(locale, "Закрытый возрастной режим", "Age-safe private mode")}</Text><Text style={styles.privacyBody}>{tx(locale, "Возраст не показывается. Геолокация и школа никогда не публикуются.", "Your age, school and location are never shown.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
+      <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитный AI, try-on и умные покупки", "Unlimited AI, try-on and smart shopping")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
+      <SectionTitle title={tx(locale, "Твои луки", "Your looks")} action={`${posts.length}`} />
+      {!posts.length ? <View style={styles.emptyLooks}><ImagePlus size={24} color={colors.secondary} /><Text style={styles.emptyLooksText}>{tx(locale, "Опубликуй первый лук — он появится здесь.", "Share your first look and it will live here.")}</Text></View> : <View style={styles.miniLooks}>{posts.map((post) => <View key={post.id} style={styles.miniLook}><OutfitCanvas look={post.outfit} /></View>)}</View>}
+      <Pressable onPress={onDelete} style={styles.deleteAccount}><Text style={styles.deleteAccountText}>{tx(locale, "Удалить аккаунт и данные", "Delete account and data")}</Text></Pressable>
+    </View>
+  );
+}
+
+function OutfitCanvas({ look, large = false }: { look: OutfitOption; large?: boolean }) {
+  return (
+    <View style={[styles.outfitCanvas, large && styles.outfitCanvasLarge]}>
+      {look.items.slice(0, large ? 7 : 6).map((item, index) => {
+        const uri = item.cutoutUri ?? item.imageUri;
+        return <View key={`${item.name}-${index}`} style={[styles.outfitPiece, large && styles.outfitPieceLarge, { transform: [{ rotate: `${index % 2 ? 3 : -3}deg` }], marginTop: index % 3 === 1 ? 13 : 0 }]}>{uri ? <Image source={{ uri }} style={styles.outfitImage} resizeMode="contain" /> : <View style={[styles.outfitColor, { backgroundColor: item.colors[0] ?? colors.powder }]}><Shirt size={large ? 24 : 18} color="#FFFFFFD8" /></View>}<Text numberOfLines={1} style={styles.outfitItemName}>{item.name}</Text></View>;
+      })}
+    </View>
+  );
+}
+
+function BottomNav({ locale, active, onChange }: { locale: Locale; active: Tab; onChange: (tab: Tab) => void }) {
+  const tabs: Array<[Tab, typeof Home, string]> = [["today", Home, tx(locale, "Сегодня", "Today")], ["circle", Compass, tx(locale, "Круг", "Circle")], ["create", Sparkles, tx(locale, "Создать", "Create")], ["closet", Shirt, tx(locale, "Шкаф", "Closet")], ["me", UserRound, tx(locale, "Я", "Me")]];
+  return <BlurView intensity={85} tint="light" style={styles.bottomNav}>{tabs.map(([id, Icon, label]) => { const selected = active === id; return <Pressable key={id} onPress={() => { onChange(id); void Haptics.selectionAsync(); }} style={[styles.navItem, id === "create" && styles.createNav]}>{id === "create" ? <View style={styles.createNavIcon}><Icon size={20} color={colors.paper} /></View> : <Icon size={21} color={selected ? colors.ultraviolet : colors.secondary} fill={id === "today" && selected ? colors.ultraviolet : "transparent"} />}<Text style={[styles.navLabel, selected && styles.navLabelActive]}>{label}</Text></Pressable>; })}</BlurView>;
+}
+
+function Onboarding({ initial, firstRun, onDone, onClose }: { initial: ProfileState; firstRun: boolean; onDone: (profile: ProfileState) => void; onClose: () => void }) {
+  const [step, setStep] = useState(0);
+  const [draft, setDraft] = useState(initial);
+  const [styleSearch, setStyleSearch] = useState("");
+  const catalog = getStyles(draft.locale);
+  const visibleCatalog = catalog.filter((style) => [style.name, style.description, ...style.aliases].some((value) => value.toLowerCase().includes(styleSearch.trim().toLowerCase())));
+  const toggleStyle = (id: string) => setDraft((current) => ({ ...current, styles: current.styles.includes(id) ? current.styles.filter((style) => style !== id) : current.styles.length >= 3 ? [...current.styles.slice(1), id] : [...current.styles, id] }));
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.onboarding}>
+      <View style={styles.onboardingTop}><Text style={styles.wordmark}>MIRA</Text>{!firstRun && <Pressable onPress={onClose} style={styles.closeButton}><X size={20} color={colors.graphite} /></Pressable>}</View>
+      <ScrollView contentContainerStyle={styles.onboardingContent} keyboardShouldPersistTaps="handled">
+        <Text style={styles.onboardingStep}>0{step + 1} / 03</Text>
+        {step === 0 && <><Text style={styles.onboardingTitle}>Choose your language</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Все стили, подсказки и интерфейс будут на выбранном языке.", "Styles, guidance and the interface follow your language.")}</Text><View style={styles.languageCards}>{(["ru", "en"] as Locale[]).map((value) => <Pressable key={value} onPress={() => setDraft((current) => ({ ...current, locale: value }))} style={[styles.languageCard, draft.locale === value && styles.languageCardActive]}><Text style={styles.languageCode}>{value.toUpperCase()}</Text><Text style={styles.languageName}>{value === "ru" ? "Русский" : "English"}</Text>{draft.locale === value && <Check size={19} color={colors.ultraviolet} />}</Pressable>)}</View></>}
+        {step === 1 && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Профиль без лишних вопросов", "A profile without the friction")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Возраст меняет подсказки, приватность и доступ к social-функциям. Точная дата рождения не нужна.", "Age changes guidance, privacy and social access. We do not need your full birth date.")}</Text><View style={styles.agePicker}><Pressable onPress={() => setDraft((p) => ({ ...p, age: Math.max(0, p.age - 1) }))} style={styles.ageButton}><Minus size={20} color={colors.graphite} /></Pressable><View><Text style={styles.ageNumber}>{draft.age}</Text><Text style={styles.ageYears}>{tx(draft.locale, "лет", "years")}</Text></View><Pressable onPress={() => setDraft((p) => ({ ...p, age: Math.min(18, p.age + 1) }))} style={styles.ageButton}><Plus size={20} color={colors.graphite} /></Pressable></View><View style={styles.ageModeCard}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.ageModeText}>{draft.age < 10 ? tx(draft.locale, "Семейный режим без открытой соцсети", "Family mode without an open social feed") : draft.age < 13 ? tx(draft.locale, "Закрытый круг по invite-коду", "Private circle by invite only") : tx(draft.locale, "Social-режим, закрытый по умолчанию", "Social mode, private by default")}</Text></View><Text style={styles.inputLabel}>{tx(draft.locale, "КАК ТЕБЯ НАЗЫВАТЬ", "WHAT SHOULD WE CALL YOU")}</Text><TextInput value={draft.nickname} onChangeText={(nickname) => setDraft((p) => ({ ...p, nickname }))} style={styles.bigInput} maxLength={30} /><Text style={styles.inputLabel}>ID</Text><View style={styles.handleInput}><Text style={styles.handlePrefix}>@</Text><TextInput autoCapitalize="none" value={draft.handle} onChangeText={(handle) => setDraft((p) => ({ ...p, handle: handle.replace(/[^a-zA-Z0-9._]/g, "").toLowerCase() }))} style={styles.handleTextInput} maxLength={24} /></View></>}
+        {step === 2 && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Настроим настроение", "Set the mood") : tx(draft.locale, "Стиль — это твой язык", "Style is your language")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Для маленьких детей стиль выбирает взрослый и может менять его в любой момент.", "A parent sets the direction for little ones and can change it anytime.") : tx(draft.locale, "Выбери до трёх направлений. MIRA научится смешивать их из твоих реальных вещей.", "Choose up to three directions. MIRA learns to mix them using your real clothes.")}</Text><View style={[styles.searchBar, { marginBottom: 12 }]}><Search size={17} color={colors.secondary} /><TextInput value={styleSearch} onChangeText={setStyleSearch} placeholder={tx(draft.locale, "Найти: emo, Stockholm, fairycore…", "Find: emo, Stockholm, fairycore…")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View><View style={styles.styleChoiceGrid}>{visibleCatalog.map((style) => { const selected = draft.styles.includes(style.id); return <Pressable key={style.id} onPress={() => toggleStyle(style.id)} style={[styles.styleChoice, selected && styles.styleChoiceActive]}><View style={styles.styleChoicePalette}>{style.palette.slice(0, 4).map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.styleChoiceName}>{style.name}</Text>{selected && <View style={styles.styleSelected}><Check size={12} color={colors.paper} /></View>}</Pressable>; })}</View></>}
+      </ScrollView>
+      <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={step === 2 && !draft.styles.length} onPress={() => step < 2 ? setStep((value) => value + 1) : void onDone(draft)} style={styles.onboardingCta}><Text style={styles.onboardingCtaText}>{step === 2 ? tx(draft.locale, "Войти в MIRA", "Enter MIRA") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
+    </KeyboardAvoidingView>
+  );
+}
+
+function ChatScreen({ locale, age, onClose }: { locale: Locale; age: number; onClose: () => void }) {
+  const [selected, setSelected] = useState(false);
+  const [message, setMessage] = useState("");
+  if (age < 13) return <View style={styles.fullScreen}><OverlayHeader title={tx(locale, "Сообщения", "Messages")} onClose={onClose} /><View style={styles.lockedChat}><View style={styles.lockedIcon}><LockKeyhole size={28} color={colors.ultraviolet} /></View><Text style={styles.lockedTitle}>{tx(locale, "Чат откроется с 13 лет", "Chat opens at 13")}</Text><Text style={styles.lockedBody}>{tx(locale, "До этого можно делиться луками внутри семейного пространства и закрытого круга без личных сообщений.", "Until then, looks can be shared in the family space and private circle without direct messages.")}</Text></View></View>;
+  return <View style={styles.fullScreen}><OverlayHeader title={selected ? "lina" : tx(locale, "Сообщения", "Messages")} onClose={() => selected ? setSelected(false) : onClose()} back={selected} />{selected ? <><ScrollView contentContainerStyle={styles.messageThread}><View style={styles.messageIncoming}><Text style={styles.messageText}>{tx(locale, "твой сегодняшний лук — очень да! можно remix?", "your look today is so good — can I remix it?")}</Text></View><View style={styles.messageOutgoing}><Text style={styles.messageTextOutgoing}>{tx(locale, "конечно ✦ покажи свою версию", "of course ✦ show me your version")}</Text></View><View style={styles.safetyNotice}><LockKeyhole size={13} color={colors.secondary} /><Text style={styles.safetyNoticeText}>{tx(locale, "Ссылки и личные контакты скрываются для безопасности", "Links and personal contact details are filtered for safety")}</Text></View></ScrollView><View style={styles.messageComposer}><TextInput value={message} onChangeText={setMessage} placeholder={tx(locale, "Сообщение…", "Message…")} style={styles.messageInput} /><Pressable style={styles.messageSend}><Send size={17} color={colors.paper} /></Pressable></View></> : <View style={styles.conversationList}>{[{ name: "lina", handle: "@lina.layers", text: tx(locale, "твой сегодняшний лук — очень да!", "your look today is so good!"), color: "#FF91A9" }, { name: "aya", handle: "@aya.archive", text: tx(locale, "сделала remix твоей рубашки", "remixed your shirt"), color: "#A9E4E7" }].map((item) => <Pressable key={item.handle} onPress={() => setSelected(true)} style={styles.conversationRow}><View style={[styles.avatar, { backgroundColor: item.color }]}><Text style={styles.avatarLetter}>{item.name[0]!.toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{item.name} <Text style={styles.postHandle}>{item.handle}</Text></Text><Text numberOfLines={1} style={styles.conversationText}>{item.text}</Text></View><View style={styles.unreadDot} /></Pressable>)}</View>}</View>;
+}
+
+function Paywall({ locale, onClose }: { locale: Locale; onClose: () => void }) {
+  const [yearly, setYearly] = useState(true);
+  return <View style={styles.paywall}><LinearGradient colors={["#17131D", "#30234D", "#6848E6"]} style={StyleSheet.absoluteFill} /><OverlayHeader title="" onClose={onClose} light /><ScrollView contentContainerStyle={styles.paywallContent}><View style={styles.paywallMark}><Sparkles size={28} color={colors.warm} /></View><Text style={styles.paywallEyebrow}>MIRA PLUS</Text><Text style={styles.paywallTitle}>{tx(locale, "Твой стиль. Без лимитов.", "Your style. No limits.")}</Text><Text style={styles.paywallLead}>{tx(locale, "Плати за решения, которые экономят время и помогают носить больше — не за искусственные звёздочки.", "Pay for useful decisions that save time and unlock your closet — not artificial coins.")}</Text><View style={styles.featureList}>{PLUS_FEATURES[locale].map((feature) => <View key={feature} style={styles.featureRow}><View style={styles.featureCheck}><Check size={13} color={colors.night} /></View><Text style={styles.featureText}>{feature}</Text></View>)}</View><View style={styles.billingSwitch}><Pressable onPress={() => setYearly(true)} style={[styles.billingOption, yearly && styles.billingOptionActive]}><Text style={[styles.billingText, yearly && styles.billingTextActive]}>{tx(locale, "Год", "Yearly")}</Text><Text style={styles.saveText}>−42%</Text></Pressable><Pressable onPress={() => setYearly(false)} style={[styles.billingOption, !yearly && styles.billingOptionActive]}><Text style={[styles.billingText, !yearly && styles.billingTextActive]}>{tx(locale, "Месяц", "Monthly")}</Text></Pressable></View><View style={styles.priceRow}><Text style={styles.price}>{yearly ? "$29.99" : "$4.99"}</Text><Text style={styles.pricePeriod}>/{yearly ? tx(locale, "год", "year") : tx(locale, "месяц", "month")}</Text></View><Pressable style={styles.paywallCta}><Text style={styles.paywallCtaText}>{tx(locale, "Попробовать 7 дней бесплатно", "Start 7-day free trial")}</Text><ChevronRight size={19} color={colors.night} /></Pressable><Text style={styles.paywallFine}>{tx(locale, "Отмена в любой момент. Покупка подтверждается через App Store.", "Cancel anytime. Purchase is confirmed through the App Store.")}</Text></ScrollView></View>;
+}
+
+function LockedSocial({ locale, age }: { locale: Locale; age: number }) {
+  return <View><Text style={styles.eyebrow}>{tx(locale, "СЕМЕЙНОЕ ПРОСТРАНСТВО", "FAMILY SPACE")}</Text><Text style={styles.screenTitle}>{tx(locale, "Наши образы", "Our looks")}</Text><View style={styles.lockedSocialCard}><View style={styles.lockedIcon}><CircleUserRound size={29} color={colors.ultraviolet} /></View><Text style={styles.lockedTitle}>{tx(locale, "Здесь нет открытой соцсети", "There is no open social feed here")}</Text><Text style={styles.lockedBody}>{age <= 5 ? tx(locale, "Луки видят только взрослые семейного аккаунта.", "Only adults in the family account can see these looks.") : tx(locale, "Можно собирать образы вместе и делиться ими только с одобренными близкими.", "Build looks together and share only with approved family members.")}</Text></View></View>;
+}
+
+function OverlayHeader({ title, onClose, back = false, light = false }: { title: string; onClose: () => void; back?: boolean; light?: boolean }) { return <View style={styles.overlayHeader}><Pressable onPress={onClose} style={[styles.closeButton, light && styles.closeButtonLight]}>{back ? <ChevronLeft size={20} color={light ? colors.paper : colors.graphite} /> : <X size={20} color={light ? colors.paper : colors.graphite} />}</Pressable><Text style={[styles.overlayTitle, light && { color: colors.paper }]}>{title}</Text><View style={{ width: 42 }} /></View>; }
+function SectionTitle({ title, action }: { title: string; action: string }) { return <View style={styles.sectionTitle}><Text style={styles.sectionTitleText}>{title}</Text><Text style={styles.sectionAction}>{action}</Text></View>; }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.porcelain },
-  shell: { flex: 1 },
-  shellWide: { flexDirection: "row" },
-  brandPanel: { width: "35%", minWidth: 330, maxWidth: 500, backgroundColor: colors.graphite, padding: 42, justifyContent: "space-between", overflow: "hidden" },
-  wordmarkLarge: { color: colors.paper, fontFamily: typography.display, fontSize: 30, letterSpacing: -1.4 },
-  brandLine: { color: "#AEB3BE", fontFamily: typography.body, fontSize: 14, marginTop: 6 },
-  brandFoot: { color: "#747A86", fontFamily: typography.bodySemibold, fontSize: 10, letterSpacing: 1.5 },
-  posterRail: { borderWidth: 1, borderColor: "#3A3E47", minHeight: 310, justifyContent: "space-between" },
-  posterText: { color: colors.paper, fontFamily: typography.display, fontSize: 40, lineHeight: 44, letterSpacing: -2.2, padding: 28 },
-  scrollContent: { flexGrow: 1, paddingBottom: 56 },
-  content: { width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: 20, paddingTop: 12 },
-  contentWide: { paddingHorizontal: 50, paddingTop: 34 },
-  mobileBrand: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 44 },
-  wordmark: { color: colors.graphite, fontFamily: typography.display, fontSize: 21, letterSpacing: -0.8 },
-  progress: { color: colors.secondary, fontFamily: typography.bodySemibold, fontSize: 12 },
-  backButton: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 22, alignSelf: "flex-start", paddingVertical: 6 },
-  backText: { color: colors.graphite, fontFamily: typography.bodyMedium, fontSize: 13 },
-  languageGrid: { gap: 12, marginBottom: 28 },
-  languageCard: { minHeight: 86, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: 18, flexDirection: "row", alignItems: "center", gap: 18 },
-  languageCardSelected: { borderColor: colors.ultraviolet, borderWidth: 2, padding: 17 },
-  languageCode: { width: 42, color: colors.ultraviolet, fontFamily: typography.displaySoft, fontSize: 13 },
-  languageName: { flex: 1, color: colors.graphite, fontFamily: typography.displaySoft, fontSize: 21 },
-  agePanel: { backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 20, marginBottom: 14 },
-  fieldLabel: { color: colors.secondary, fontFamily: typography.bodySemibold, fontSize: 11, textTransform: "uppercase", letterSpacing: 1 },
-  ageControls: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 28, marginVertical: 12 },
-  squareControl: { width: 44, height: 44, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
-  ageValue: { minWidth: 76, textAlign: "center", color: colors.graphite, fontFamily: typography.display, fontSize: 62, lineHeight: 68 },
-  ageTrack: { height: 5, backgroundColor: "#E8EAF0", marginTop: 8 },
-  ageTrackFill: { height: 5, backgroundColor: colors.ultraviolet },
-  ageLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
-  utility: { color: "#9BA0AA", fontFamily: typography.bodyMedium, fontSize: 10 },
-  choiceRow: { flexDirection: "row", gap: 14, padding: 17, borderWidth: 1, borderColor: colors.line, backgroundColor: "transparent" },
-  choiceRowSelected: { borderColor: colors.ultraviolet, backgroundColor: "#F0EFFF" },
-  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: "#9CA1AB", alignItems: "center", justifyContent: "center", marginTop: 2 },
-  radioSelected: { borderColor: colors.ultraviolet },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.ultraviolet },
-  choiceTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 15 },
-  choiceBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 12.5, lineHeight: 19, marginTop: 3 },
-  totalLookPanel: { backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 18, marginBottom: 24 },
-  totalLookIntro: { color: colors.secondary, fontFamily: typography.body, fontSize: 12.5, lineHeight: 19, marginTop: 7, marginBottom: 14 },
-  smallSectionLabel: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 12, marginTop: 13, marginBottom: 8 },
-  chipGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  segmentChip: { borderWidth: 1, borderColor: colors.line, backgroundColor: "#F7F8FA", paddingHorizontal: 11, paddingVertical: 8 },
-  colorChip: { borderWidth: 1, borderColor: colors.line, backgroundColor: "#F7F8FA", paddingHorizontal: 10, paddingVertical: 8 },
-  segmentChipSelected: { borderColor: colors.ultraviolet, backgroundColor: "#F0EFFF" },
-  segmentChipText: { color: colors.secondary, fontFamily: typography.bodyMedium, fontSize: 11.5 },
-  segmentChipTextSelected: { color: colors.graphite, fontFamily: typography.bodySemibold },
-  mixPanel: { borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, marginBottom: 12 },
-  mixContent: { padding: 18 },
-  mixText: { color: colors.graphite, fontFamily: typography.displaySoft, fontSize: 20, marginTop: 5 },
-  searchBox: { minHeight: 50, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 15, marginBottom: 12 },
-  searchInput: { flex: 1, color: colors.graphite, fontFamily: typography.body, fontSize: 14, outlineStyle: "none" } as never,
-  styleGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 24 },
-  styleCard: { width: "48%", minHeight: 142, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 13, position: "relative" },
-  styleCardSelected: { borderColor: colors.ultraviolet, borderWidth: 2, padding: 12 },
-  paletteRow: { flexDirection: "row", gap: 2, marginBottom: 13 },
-  styleName: { color: colors.graphite, fontFamily: typography.displaySoft, fontSize: 17 },
-  styleDescription: { color: colors.secondary, fontFamily: typography.body, fontSize: 11.5, lineHeight: 16, marginTop: 5, paddingRight: 14 },
-  styleCheck: { position: "absolute", right: 10, bottom: 10, width: 22, height: 22, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
-  styleCheckSelected: { backgroundColor: colors.ultraviolet, borderColor: colors.ultraviolet },
-  actionPair: { flexDirection: "row", gap: 10 },
-  photoAction: { flex: 1, minHeight: 88, backgroundColor: colors.graphite, padding: 16, justifyContent: "space-between" },
-  photoActionText: { color: colors.paper, fontFamily: typography.bodySemibold, fontSize: 14 },
-  demoAction: { flex: 1, minHeight: 88, backgroundColor: "#EEEAFE", padding: 16, justifyContent: "space-between" },
-  demoActionText: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 14 },
-  quickRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  quickChip: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingVertical: 9, paddingHorizontal: 11 },
-  quickText: { color: colors.graphite, fontFamily: typography.bodyMedium, fontSize: 11.5 },
-  wardrobeList: { marginVertical: 20, gap: 8 },
-  emptyState: { borderWidth: 1, borderStyle: "dashed", borderColor: "#C7CBD3", minHeight: 130, alignItems: "center", justifyContent: "center", padding: 24 },
-  emptyText: { color: colors.secondary, fontFamily: typography.body, fontSize: 13, lineHeight: 20, textAlign: "center", marginTop: 10, maxWidth: 280 },
-  garmentRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 9 },
-  garmentSwatch: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
-  garmentImage: { width: 48, height: 48, resizeMode: "cover" },
-  garmentName: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 13.5 },
-  garmentMeta: { color: colors.secondary, fontFamily: typography.body, fontSize: 10.5, marginTop: 3 },
-  syncBanner: { flexDirection: "row", gap: 10, borderWidth: 1, borderColor: "#E2C38D", backgroundColor: "#FFF7E8", padding: 14, marginBottom: 18 },
-  syncBannerOnline: { borderColor: "#AFCFBB", backgroundColor: "#EDF8F1" },
-  syncDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#D49024", marginTop: 5 },
-  syncDotOnline: { backgroundColor: colors.success },
-  syncTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 12.5 },
-  syncBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 11.5, lineHeight: 17, marginTop: 2 },
-  outfitCard: { backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 16 },
-  outfitTopline: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  outfitNumber: { color: colors.graphite, fontFamily: typography.displaySoft, fontSize: 19 },
-  outfitScore: { color: colors.ultraviolet, fontFamily: typography.bodySemibold, fontSize: 12 },
-  flatLay: { minHeight: 190, flexDirection: "row", flexWrap: "wrap", alignContent: "center", justifyContent: "center", gap: 8, paddingVertical: 20 },
-  flatLayItem: { width: "30%", minWidth: 88, maxWidth: 150, minHeight: 76, backgroundColor: "#F7F8FA", borderWidth: 1, borderColor: "#E5E7EC", padding: 7, justifyContent: "space-between" },
-  itemColor: { height: 34, marginBottom: 6 },
-  itemImageFrame: { height: 54, marginBottom: 6, backgroundColor: "#EEF0F4", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  itemImage: { width: "100%", height: "100%", resizeMode: "contain" },
-  flatLayName: { color: colors.graphite, fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 13 },
-  stylingPanel: { borderTopWidth: 1, borderTopColor: "#E8EAF0", paddingTop: 13, gap: 8 },
-  stylingTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 13 },
-  stylingBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 11.5, lineHeight: 17 },
-  colorAdvice: { color: colors.graphite, fontFamily: typography.bodyMedium, fontSize: 11.5, lineHeight: 17, backgroundColor: "#F0EFFF", padding: 10 },
-  stylingSuggestionGrid: { gap: 7, marginTop: 2 },
-  stylingSuggestion: { backgroundColor: "#F7F8FA", borderWidth: 1, borderColor: "#E5E7EC", padding: 10 },
-  stylingSuggestionTitle: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 11.5 },
-  stylingSuggestionBody: { color: colors.secondary, fontFamily: typography.body, fontSize: 10.8, lineHeight: 15, marginTop: 3 },
-  reasonList: { borderTopWidth: 1, borderTopColor: "#E8EAF0", paddingTop: 12, gap: 7 },
-  reasonRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  reasonBullet: { width: 5, height: 5, backgroundColor: colors.ultraviolet },
-  reasonText: { color: colors.secondary, fontFamily: typography.body, fontSize: 11.5 },
-  chooseButton: { minHeight: 46, backgroundColor: colors.graphite, marginTop: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: 15, paddingRight: 5 },
-  chooseText: { color: colors.paper, fontFamily: typography.bodySemibold, fontSize: 12.5 },
-  miniArrow: { width: 36, height: 36, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
-  secondaryButton: { minHeight: 52, borderWidth: 1, borderColor: colors.graphite, alignItems: "center", justifyContent: "center", marginTop: 18 },
-  secondaryButtonText: { color: colors.graphite, fontFamily: typography.bodySemibold, fontSize: 14 },
+  desktopStage: { flex: 1, backgroundColor: colors.porcelain },
+  desktopStageWide: { paddingVertical: 18, alignItems: "center", backgroundColor: "#E9E5F1" },
+  phone: { flex: 1, width: "100%", backgroundColor: colors.porcelain, overflow: "hidden" },
+  phoneWide: { maxWidth: 540, borderRadius: 28 },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.porcelain },
+  header: { height: 66, paddingHorizontal: 19, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#EAE6EF", backgroundColor: "#F4F2FAF0" },
+  wordmark: { fontFamily: typography.display, fontSize: 23, color: colors.graphite, letterSpacing: -1.3 },
+  headerSub: { fontFamily: typography.bodyMedium, fontSize: 9.5, color: colors.secondary, marginTop: -1 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 7 },
+  plusBadge: { height: 33, paddingHorizontal: 10, borderRadius: 17, backgroundColor: colors.violetMist, flexDirection: "row", alignItems: "center", gap: 5 },
+  plusBadgeText: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.ultraviolet, letterSpacing: 0.7 },
+  iconButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 18, paddingTop: 23, paddingBottom: 124 },
+  greetingRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  eyebrow: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.ultraviolet, letterSpacing: 1.2, marginBottom: 7 },
+  heroTitle: { fontFamily: typography.display, fontSize: 29, lineHeight: 35, color: colors.graphite, letterSpacing: -1.5 },
+  screenTitle: { fontFamily: typography.display, fontSize: 28, lineHeight: 34, color: colors.graphite, letterSpacing: -1.4 },
+  weatherOrb: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.warm, alignItems: "center", justifyContent: "center" },
+  weatherEmoji: { fontSize: 17, lineHeight: 18 },
+  weatherTemp: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
+  lead: { fontFamily: typography.body, fontSize: 14, lineHeight: 21, color: colors.secondary, marginTop: 9, marginBottom: 17 },
+  styleDna: { height: 62, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, borderRadius: 18, overflow: "hidden", flexDirection: "row", alignItems: "center", paddingRight: 14, marginBottom: 14 },
+  styleStripe: { width: 8, alignSelf: "stretch" },
+  styleDnaCopy: { flex: 1, paddingHorizontal: 13 },
+  miniLabel: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.secondary, letterSpacing: 1.1 },
+  styleDnaName: { fontFamily: typography.bodySemibold, fontSize: 14, color: colors.graphite, marginTop: 4 },
+  heroLookCard: { minHeight: 450, borderRadius: 28, overflow: "hidden", padding: 18, borderWidth: 1, borderColor: "#FFFFFFA0" },
+  heroLookTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", zIndex: 1 },
+  lookMood: { fontFamily: typography.displaySoft, fontSize: 16, color: colors.graphite, marginTop: 4, textTransform: "capitalize" },
+  matchPill: { paddingHorizontal: 10, height: 31, borderRadius: 16, backgroundColor: "#FFFFFFD6", flexDirection: "row", alignItems: "center", gap: 5 },
+  matchText: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.ultraviolet },
+  outfitCanvas: { minHeight: 210, paddingVertical: 14, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "center", gap: 9 },
+  outfitCanvasLarge: { minHeight: 324, paddingTop: 25, paddingBottom: 10 },
+  outfitPiece: { width: "29%", minHeight: 88, alignItems: "center", justifyContent: "center" },
+  outfitPieceLarge: { width: "28%", minHeight: 112 },
+  outfitColor: { width: "100%", aspectRatio: 1.08, borderRadius: 22, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: "#FFFFFFB8" },
+  outfitImage: { width: "100%", height: 90 },
+  outfitItemName: { fontFamily: typography.bodyMedium, fontSize: 8.2, color: colors.graphite, marginTop: 4, maxWidth: "100%" },
+  heroActions: { flexDirection: "row", gap: 9, marginTop: 4 },
+  secondaryAction: { flex: 1, minHeight: 48, borderRadius: 16, backgroundColor: colors.paper, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: colors.line },
+  secondaryActionText: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
+  primaryAction: { flex: 1.25, minHeight: 48, borderRadius: 16, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  primaryActionText: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.paper },
+  sectionTitle: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 27, marginBottom: 12 },
+  sectionTitleText: { fontFamily: typography.displaySoft, fontSize: 16, color: colors.graphite, letterSpacing: -0.5 },
+  sectionAction: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.ultraviolet },
+  aiCard: { borderRadius: 23, backgroundColor: colors.paper, padding: 15, borderWidth: 1, borderColor: colors.line },
+  aiIdentity: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
+  aiMark: { width: 37, height: 37, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: colors.ultraviolet },
+  aiName: { fontFamily: typography.bodySemibold, fontSize: 12.5, color: colors.graphite },
+  aiStatus: { fontFamily: typography.body, fontSize: 10, color: colors.success, marginTop: 2 },
+  aiAnswer: { fontFamily: typography.body, fontSize: 12.5, lineHeight: 19, color: colors.graphite, backgroundColor: colors.violetMist, borderRadius: 14, padding: 12, marginBottom: 10 },
+  aiComposer: { height: 48, backgroundColor: "#F6F4F8", borderRadius: 16, flexDirection: "row", alignItems: "center", paddingLeft: 13, paddingRight: 5 },
+  aiInput: { flex: 1, fontFamily: typography.body, fontSize: 11.5, color: colors.graphite, outlineStyle: "none" } as never,
+  aiSend: { width: 38, height: 38, borderRadius: 13, backgroundColor: colors.graphite, alignItems: "center", justifyContent: "center" },
+  quickPrompts: { gap: 7, paddingTop: 10 },
+  promptChip: { borderWidth: 1, borderColor: colors.line, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 7 },
+  promptChipText: { fontFamily: typography.bodyMedium, fontSize: 9.5, color: colors.secondary },
+  challengeCard: { borderRadius: 20, backgroundColor: colors.paper, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: colors.line },
+  challengeIcon: { width: 43, height: 43, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.warm },
+  challengeTitle: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
+  progressTrack: { height: 5, borderRadius: 3, backgroundColor: "#E9E6EC", marginTop: 8, overflow: "hidden" },
+  progressFill: { height: 5, borderRadius: 3, backgroundColor: colors.coral },
+  challengeMeta: { fontFamily: typography.bodyMedium, fontSize: 9, color: colors.secondary, marginTop: 5 },
+  screenTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  roundSearch: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
+  feedTabs: { flexDirection: "row", gap: 20, borderBottomWidth: 1, borderBottomColor: colors.line, marginTop: 20, marginBottom: 13 },
+  feedTab: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.secondary, paddingBottom: 11 },
+  feedTabActive: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite, paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: colors.ultraviolet },
+  searchBar: { height: 45, backgroundColor: colors.paper, borderRadius: 15, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
+  searchInput: { flex: 1, fontFamily: typography.body, fontSize: 11.5, color: colors.graphite, outlineStyle: "none" } as never,
+  trendRail: { gap: 9, paddingVertical: 14 },
+  trendCard: { width: 110, height: 78, backgroundColor: colors.paper, borderRadius: 16, overflow: "hidden", paddingBottom: 8, borderWidth: 1, borderColor: colors.line },
+  trendPalette: { flexDirection: "row", height: 28 },
+  trendName: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite, paddingHorizontal: 9, marginTop: 6 },
+  trendChange: { position: "absolute", right: 8, bottom: 7, fontFamily: typography.bodySemibold, fontSize: 8, color: colors.success },
+  feedList: { gap: 15 },
+  postCard: { backgroundColor: colors.paper, borderRadius: 24, padding: 13, borderWidth: 1, borderColor: colors.line },
+  postHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 11 },
+  avatar: { width: 39, height: 39, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  avatarLetter: { fontFamily: typography.displaySoft, fontSize: 14, color: colors.graphite },
+  postName: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.graphite },
+  postHandle: { fontFamily: typography.body, color: colors.secondary },
+  postTime: { fontFamily: typography.body, fontSize: 9.5, color: colors.secondary, marginTop: 2 },
+  postCanvas: { minHeight: 235, borderRadius: 20, overflow: "hidden" },
+  postCaption: { fontFamily: typography.bodyMedium, fontSize: 11.5, lineHeight: 17, color: colors.graphite, marginTop: 11 },
+  postActions: { flexDirection: "row", alignItems: "center", marginTop: 10, gap: 15 },
+  socialAction: { flexDirection: "row", alignItems: "center", gap: 5 },
+  socialCount: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.secondary },
+  remixButton: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.violetMist, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 7 },
+  remixText: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.ultraviolet },
+  fieldCaption: { fontFamily: typography.bodySemibold, fontSize: 9, color: colors.secondary, letterSpacing: 1.1, marginTop: 9, marginBottom: 9 },
+  occasionRail: { gap: 8, paddingBottom: 20 },
+  occasionCard: { width: 91, height: 71, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  occasionCardActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
+  occasionEmoji: { fontSize: 18, marginBottom: 5 },
+  occasionLabel: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.secondary },
+  occasionLabelActive: { color: colors.paper },
+  createStyleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  createStyleName: { fontFamily: typography.displaySoft, fontSize: 14, color: colors.graphite, textTransform: "capitalize" },
+  builderCanvas: { minHeight: 430, borderRadius: 27, overflow: "hidden", padding: 15 },
+  lookAdvice: { backgroundColor: "#FFFFFFD9", borderRadius: 16, padding: 11 },
+  lookAdviceTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  lookAdviceBody: { fontFamily: typography.body, fontSize: 9.5, lineHeight: 14, color: colors.secondary, marginTop: 3 },
+  lookDots: { flexDirection: "row", justifyContent: "center", gap: 6, paddingVertical: 13 },
+  lookDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#CBC6D1" },
+  lookDotActive: { width: 22, backgroundColor: colors.ultraviolet },
+  builderActions: { flexDirection: "row", gap: 9 },
+  tipCard: { flexDirection: "row", gap: 10, borderRadius: 18, backgroundColor: colors.violetMist, padding: 13, marginTop: 13 },
+  tipText: { flex: 1, fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary },
+  addRound: { width: 45, height: 45, borderRadius: 17, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  closetStats: { backgroundColor: colors.paper, borderRadius: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-around", paddingVertical: 16, marginTop: 18, borderWidth: 1, borderColor: colors.line },
+  statValue: { fontFamily: typography.displaySoft, fontSize: 18, color: colors.graphite, textAlign: "center" },
+  statLabel: { fontFamily: typography.body, fontSize: 8.5, color: colors.secondary, textAlign: "center", marginTop: 2 },
+  statDivider: { width: 1, height: 30, backgroundColor: colors.line },
+  scanCard: { minHeight: 81, borderRadius: 21, overflow: "hidden", padding: 14, flexDirection: "row", alignItems: "center", gap: 11, marginTop: 13 },
+  scanIcon: { width: 45, height: 45, borderRadius: 15, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
+  scanTitle: { fontFamily: typography.bodySemibold, fontSize: 12.5, color: colors.paper },
+  scanBody: { fontFamily: typography.body, fontSize: 9.5, color: "#E8E1FF", marginTop: 3 },
+  filterRail: { gap: 7, paddingVertical: 15 },
+  filterChip: { borderRadius: 14, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.paper },
+  filterChipActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
+  filterText: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.secondary },
+  filterTextActive: { color: colors.paper },
+  closetGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  closetItem: { width: "31%", marginBottom: 6 },
+  closetArt: { width: "100%", aspectRatio: 0.95, borderRadius: 20, alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative" },
+  closetImage: { width: "100%", height: "100%", resizeMode: "contain" },
+  processingBadge: { position: "absolute", right: 6, top: 6, height: 20, borderRadius: 10, paddingHorizontal: 6, backgroundColor: colors.paper, flexDirection: "row", alignItems: "center", gap: 2 },
+  processingText: { fontFamily: typography.bodySemibold, fontSize: 7.5, color: colors.ultraviolet },
+  closetName: { fontFamily: typography.bodySemibold, fontSize: 9.5, lineHeight: 13, color: colors.graphite, marginTop: 6 },
+  closetMeta: { fontFamily: typography.body, fontSize: 8, color: colors.success, marginTop: 2 },
+  profileHero: { minHeight: 238, borderRadius: 27, overflow: "hidden", alignItems: "center", padding: 23 },
+  profileAvatar: { width: 72, height: 72, borderRadius: 27, backgroundColor: colors.graphite, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: colors.paper },
+  profileAvatarText: { fontFamily: typography.display, fontSize: 25, color: colors.paper },
+  profileName: { fontFamily: typography.displaySoft, fontSize: 20, color: colors.graphite, marginTop: 10 },
+  profileHandle: { fontFamily: typography.bodyMedium, fontSize: 10.5, color: colors.secondary, marginTop: 2 },
+  editProfile: { borderRadius: 14, backgroundColor: "#FFFFFFC9", paddingHorizontal: 14, paddingVertical: 8, marginTop: 12 },
+  editProfileText: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.graphite },
+  profileStats: { flexDirection: "row", justifyContent: "space-around", paddingVertical: 18 },
+  profileStatValue: { fontFamily: typography.displaySoft, fontSize: 17, color: colors.graphite, textAlign: "center" },
+  profileStatLabel: { fontFamily: typography.body, fontSize: 8.5, color: colors.secondary, marginTop: 3 },
+  profileStyleCard: { backgroundColor: colors.paper, borderRadius: 22, borderWidth: 1, borderColor: colors.line, overflow: "hidden", padding: 16, paddingLeft: 24 },
+  profileStyleName: { fontFamily: typography.displaySoft, fontSize: 15, color: colors.graphite, marginTop: 7, textTransform: "capitalize" },
+  profileStyleBody: { fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary, marginTop: 7 },
+  privacyCard: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.paper, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 13, marginTop: 11 },
+  privacyIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  privacyTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  privacyBody: { fontFamily: typography.body, fontSize: 9, lineHeight: 13, color: colors.secondary, marginTop: 3 },
+  plusCard: { minHeight: 79, borderRadius: 21, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 12, padding: 15, marginTop: 11 },
+  plusTitle: { fontFamily: typography.displaySoft, fontSize: 12, color: colors.paper },
+  plusBody: { fontFamily: typography.body, fontSize: 9.5, color: "#D6CDE6", marginTop: 3 },
+  emptyLooks: { minHeight: 110, borderRadius: 20, borderWidth: 1, borderStyle: "dashed", borderColor: "#C8C1CF", alignItems: "center", justifyContent: "center", padding: 20 },
+  emptyLooksText: { fontFamily: typography.body, fontSize: 10.5, color: colors.secondary, textAlign: "center", marginTop: 7 },
+  deleteAccount: { alignSelf: "center", padding: 12, marginTop: 18 },
+  deleteAccountText: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.danger },
+  miniLooks: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  miniLook: { width: "48%", minHeight: 200, borderRadius: 18, backgroundColor: colors.violetMist, overflow: "hidden" },
+  bottomNav: { position: "absolute", left: 10, right: 10, bottom: 8, height: 72, borderRadius: 25, borderWidth: 1, borderColor: "#FFFFFF", overflow: "hidden", flexDirection: "row", alignItems: "center", justifyContent: "space-around", paddingHorizontal: 5 },
+  navItem: { flex: 1, height: 62, alignItems: "center", justifyContent: "center", gap: 3 },
+  navLabel: { fontFamily: typography.bodySemibold, fontSize: 7.8, color: colors.secondary },
+  navLabelActive: { color: colors.ultraviolet },
+  createNav: { marginTop: -12 },
+  createNavIcon: { width: 43, height: 43, borderRadius: 17, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  toast: { position: "absolute", left: 28, right: 28, bottom: 89, minHeight: 46, borderRadius: 16, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 13 },
+  toastText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.paper, textAlign: "center" },
+  overlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: colors.porcelain },
+  fullScreen: { flex: 1, backgroundColor: colors.porcelain },
+  overlayHeader: { height: 62, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  overlayTitle: { fontFamily: typography.displaySoft, fontSize: 16, color: colors.graphite },
+  closeButton: { width: 42, height: 42, borderRadius: 17, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.line },
+  closeButtonLight: { backgroundColor: "#FFFFFF14", borderColor: "#FFFFFF24" },
+  onboarding: { flex: 1, backgroundColor: colors.porcelain },
+  onboardingTop: { height: 65, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  onboardingContent: { padding: 19, paddingBottom: 30 },
+  onboardingStep: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.ultraviolet, letterSpacing: 1.2, marginBottom: 15 },
+  onboardingTitle: { fontFamily: typography.display, fontSize: 28, lineHeight: 35, color: colors.graphite, letterSpacing: -1.5 },
+  onboardingLead: { fontFamily: typography.body, fontSize: 13, lineHeight: 20, color: colors.secondary, marginTop: 10, marginBottom: 21 },
+  languageCards: { gap: 10 },
+  languageCard: { height: 78, borderRadius: 20, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 17, gap: 14 },
+  languageCardActive: { borderColor: colors.ultraviolet, borderWidth: 2 },
+  languageCode: { width: 37, fontFamily: typography.displaySoft, fontSize: 11, color: colors.ultraviolet },
+  languageName: { flex: 1, fontFamily: typography.displaySoft, fontSize: 17, color: colors.graphite },
+  agePicker: { height: 136, borderRadius: 25, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 35 },
+  ageButton: { width: 43, height: 43, borderRadius: 16, backgroundColor: colors.porcelain, alignItems: "center", justifyContent: "center" },
+  ageNumber: { fontFamily: typography.display, fontSize: 51, lineHeight: 56, color: colors.graphite, textAlign: "center" },
+  ageYears: { fontFamily: typography.bodyMedium, fontSize: 9, color: colors.secondary, textAlign: "center" },
+  ageModeCard: { flexDirection: "row", gap: 8, backgroundColor: colors.violetMist, borderRadius: 16, padding: 11, marginTop: 10, marginBottom: 18 },
+  ageModeText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 10, lineHeight: 15, color: colors.graphite },
+  inputLabel: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.secondary, letterSpacing: 1, marginBottom: 6, marginTop: 9 },
+  bigInput: { height: 51, borderRadius: 16, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, fontFamily: typography.bodySemibold, fontSize: 14, color: colors.graphite, outlineStyle: "none" } as never,
+  handleInput: { height: 51, borderRadius: 16, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
+  handlePrefix: { fontFamily: typography.bodySemibold, fontSize: 14, color: colors.ultraviolet },
+  handleTextInput: { flex: 1, fontFamily: typography.bodySemibold, fontSize: 14, color: colors.graphite, outlineStyle: "none" } as never,
+  styleChoiceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
+  styleChoice: { width: "48%", minHeight: 81, borderRadius: 18, overflow: "hidden", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, paddingBottom: 9 },
+  styleChoiceActive: { borderColor: colors.ultraviolet, borderWidth: 2 },
+  styleChoicePalette: { height: 29, flexDirection: "row" },
+  styleChoiceName: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite, paddingHorizontal: 10, paddingTop: 9 },
+  styleSelected: { position: "absolute", right: 7, bottom: 7, width: 21, height: 21, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.ultraviolet },
+  onboardingFooter: { minHeight: 76, paddingHorizontal: 18, paddingBottom: 10, flexDirection: "row", alignItems: "center", gap: 9, borderTopWidth: 1, borderTopColor: colors.line },
+  backRound: { width: 49, height: 49, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
+  onboardingCta: { flex: 1, height: 51, borderRadius: 17, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.graphite },
+  onboardingCtaText: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.paper },
+  lockedChat: { flex: 1, alignItems: "center", justifyContent: "center", padding: 35 },
+  lockedIcon: { width: 65, height: 65, borderRadius: 24, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center", marginBottom: 15 },
+  lockedTitle: { fontFamily: typography.displaySoft, fontSize: 16, color: colors.graphite, textAlign: "center" },
+  lockedBody: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 18, color: colors.secondary, textAlign: "center", marginTop: 8 },
+  lockedSocialCard: { minHeight: 270, marginTop: 20, backgroundColor: colors.paper, borderRadius: 26, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", padding: 30 },
+  conversationList: { padding: 17, gap: 8 },
+  conversationRow: { minHeight: 68, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 11, flexDirection: "row", alignItems: "center", gap: 10 },
+  conversationText: { fontFamily: typography.body, fontSize: 10.5, color: colors.secondary, marginTop: 4 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.coral },
+  messageThread: { flexGrow: 1, padding: 18, gap: 10, justifyContent: "flex-end" },
+  messageIncoming: { maxWidth: "79%", alignSelf: "flex-start", borderRadius: 18, borderBottomLeftRadius: 5, backgroundColor: colors.paper, padding: 12 },
+  messageOutgoing: { maxWidth: "79%", alignSelf: "flex-end", borderRadius: 18, borderBottomRightRadius: 5, backgroundColor: colors.ultraviolet, padding: 12 },
+  messageText: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 17, color: colors.graphite },
+  messageTextOutgoing: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 17, color: colors.paper },
+  safetyNotice: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "center", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12, backgroundColor: "#ECE9F0" },
+  safetyNoticeText: { fontFamily: typography.bodyMedium, fontSize: 8.5, color: colors.secondary },
+  messageComposer: { minHeight: 68, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.paper },
+  messageInput: { flex: 1, height: 43, borderRadius: 15, backgroundColor: colors.porcelain, paddingHorizontal: 12, fontFamily: typography.body, fontSize: 11.5, outlineStyle: "none" } as never,
+  messageSend: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  paywall: { flex: 1, backgroundColor: colors.night },
+  paywallContent: { paddingHorizontal: 23, paddingBottom: 40, alignItems: "center" },
+  paywallMark: { width: 65, height: 65, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF15", marginTop: 22 },
+  paywallEyebrow: { fontFamily: typography.bodySemibold, fontSize: 10, letterSpacing: 1.7, color: colors.warm, marginTop: 16 },
+  paywallTitle: { fontFamily: typography.display, fontSize: 27, lineHeight: 34, color: colors.paper, textAlign: "center", letterSpacing: -1.4, marginTop: 8 },
+  paywallLead: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 18, color: "#D0C8DD", textAlign: "center", marginTop: 10 },
+  featureList: { width: "100%", gap: 12, marginTop: 25 },
+  featureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  featureCheck: { width: 24, height: 24, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.warm },
+  featureText: { fontFamily: typography.bodyMedium, fontSize: 11, color: colors.paper },
+  billingSwitch: { width: "100%", minHeight: 53, borderRadius: 18, backgroundColor: "#FFFFFF12", flexDirection: "row", padding: 5, marginTop: 25 },
+  billingOption: { flex: 1, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  billingOptionActive: { backgroundColor: colors.paper },
+  billingText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: "#CFC6DB" },
+  billingTextActive: { color: colors.graphite },
+  saveText: { fontFamily: typography.bodySemibold, fontSize: 8, color: colors.success },
+  priceRow: { flexDirection: "row", alignItems: "flex-end", marginTop: 18 },
+  price: { fontFamily: typography.display, fontSize: 31, color: colors.paper },
+  pricePeriod: { fontFamily: typography.bodyMedium, fontSize: 10, color: "#CFC6DB", marginBottom: 6 },
+  paywallCta: { width: "100%", height: 55, borderRadius: 18, backgroundColor: colors.warm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 16 },
+  paywallCtaText: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.night },
+  paywallFine: { fontFamily: typography.body, fontSize: 8.5, color: "#AAA0B9", textAlign: "center", marginTop: 10 },
 });

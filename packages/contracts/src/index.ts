@@ -211,6 +211,118 @@ export type StyleDefinition = {
   traits: string[];
 };
 
+export const AgeModeSchema = z.enum(["FAMILY", "CO_CREATE", "PRIVATE_TEEN", "SOCIAL_TEEN"]);
+export type AgeMode = z.infer<typeof AgeModeSchema>;
+
+export const ageModeFor = (ageYears: number): AgeMode => {
+  if (ageYears <= 5) return "FAMILY";
+  if (ageYears <= 9) return "CO_CREATE";
+  if (ageYears <= 12) return "PRIVATE_TEEN";
+  return "SOCIAL_TEEN";
+};
+
+export const PrivacyStateSchema = z.enum(["PRIVATE", "CIRCLE", "PUBLIC"]);
+export type PrivacyState = z.infer<typeof PrivacyStateSchema>;
+
+export const AccountInputSchema = z.object({
+  nickname: z.string().trim().min(2).max(30),
+  handle: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9._]{3,24}$/),
+  ageYears: z.number().int().min(0).max(18),
+  locale: LocaleSchema,
+  styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
+  avatarUri: z.string().url().max(1024).optional(),
+  privacyState: PrivacyStateSchema.optional(),
+});
+export type AccountInput = z.infer<typeof AccountInputSchema>;
+
+export type SocialAccount = AccountInput & {
+  id: string;
+  ageMode: AgeMode;
+  privacyState: PrivacyState;
+  followersCount: number;
+  followingCount: number;
+  looksCount: number;
+  createdAt: string;
+};
+
+export const GuestSessionInputSchema = AccountInputSchema.extend({
+  installId: z.string().trim().min(16).max(160),
+});
+export type GuestSessionInput = z.infer<typeof GuestSessionInputSchema>;
+
+export type GuestSession = {
+  accessToken: string;
+  expiresAt: string;
+  account: SocialAccount;
+};
+
+export const LookVisibilitySchema = z.enum(["PRIVATE", "CIRCLE", "PUBLIC"]);
+export type LookVisibility = z.infer<typeof LookVisibilitySchema>;
+
+export const LookPostInputSchema = z.object({
+  outfit: z.custom<OutfitOption>(),
+  caption: z.string().trim().max(500).default(""),
+  styleTags: z.array(z.string().min(1).max(40)).max(8).default([]),
+  visibility: LookVisibilitySchema.default("CIRCLE"),
+  challengeId: z.string().uuid().optional(),
+  remixOfPostId: z.string().uuid().optional(),
+});
+export type LookPostInput = z.infer<typeof LookPostInputSchema>;
+
+export type LookPost = LookPostInput & {
+  id: string;
+  author: Pick<SocialAccount, "id" | "nickname" | "handle" | "avatarUri" | "styleMix">;
+  reactionCount: number;
+  commentCount: number;
+  remixCount: number;
+  viewerReacted: boolean;
+  createdAt: string;
+};
+
+export const FollowInputSchema = z.object({ targetAccountId: z.string().uuid() });
+export const ReactionInputSchema = z.object({ kind: z.enum(["LOVE", "INSPIRED", "WOW"]).default("LOVE") });
+
+export const MessageInputSchema = z.object({
+  body: z.string().trim().min(1).max(1200),
+});
+export type MessageInput = z.infer<typeof MessageInputSchema>;
+
+export type DirectMessage = MessageInput & {
+  id: string;
+  conversationId: string;
+  senderAccountId: string;
+  moderationState: "CLEAN" | "PENDING" | "HIDDEN";
+  createdAt: string;
+};
+
+export const ReportInputSchema = z.object({
+  targetType: z.enum(["ACCOUNT", "LOOK_POST", "MESSAGE"]),
+  targetId: z.string().uuid(),
+  reason: z.enum(["BULLYING", "SEXUAL_CONTENT", "SELF_HARM", "HATE", "SPAM", "OTHER"]),
+  details: z.string().trim().max(500).optional(),
+});
+
+export const AiStylistInputSchema = z.object({
+  ageYears: z.number().int().min(0).max(18),
+  locale: LocaleSchema,
+  question: z.string().trim().min(1).max(600),
+  styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
+  wardrobeSummary: z.array(z.string().trim().min(1).max(120)).max(120).default([]),
+  outfit: z.custom<OutfitOption>().optional(),
+});
+export type AiStylistInput = z.infer<typeof AiStylistInputSchema>;
+
+export type AiStylistResponse = {
+  answer: string;
+  quickActions: string[];
+  safetyMode: "UNDER_13_LOCAL" | "TEEN_GUARDED" | "STANDARD";
+  provider: "openai" | "local";
+};
+
 export type ApiError = {
   code: string;
   message: string;

@@ -1,33 +1,55 @@
 {
   "expo": {
-    "name": "Kidz",
+    "name": "MIRA",
     "slug": "kidz",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "kidz",
+    "icon": "./assets/icon.png",
+    "scheme": "mira",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "plugins": [
       "expo-router",
       [
         "expo-image-picker",
         {
-          "photosPermission": "Kidz использует выбранное фото только для добавления вещи в ваш гардероб.",
-          "cameraPermission": "Kidz использует камеру только для фотографирования одежды.",
+          "photosPermission": "MIRA использует выбранные фотографии только для добавления вещей и образов, которые вы решили опубликовать.",
+          "cameraPermission": "MIRA использует камеру только когда вы фотографируете вещь или создаёте образ.",
           "microphonePermission": false
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#6C4BFF",
+          "image": "./assets/icon.png",
+          "imageWidth": 180
         }
       ]
     ],
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "app.kidz.mobile"
+      "supportsTablet": false,
+      "bundleIdentifier": "app.kidz.mobile",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "MIRA сохраняет изображение образа только по вашему действию.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "package": "app.kidz.mobile"
+      "package": "app.kidz.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#6C4BFF"
+      }
     },
     "web": {
       "bundler": "metro",
-      "output": "static"
+      "output": "static",
+      "favicon": "./assets/favicon.png"
     },
     "experiments": {
       "typedRoutes": true

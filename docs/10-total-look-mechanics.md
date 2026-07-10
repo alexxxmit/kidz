@@ -95,9 +95,9 @@ LLM не должен самостоятельно решать:
    - `cutoutUri` — PNG/WebP с прозрачным фоном.
 5. Flatlay использует `cutoutUri`. Если его ещё нет, UI временно показывает `imageUri` и статус `PENDING_CUTOUT`.
 
-В текущем slice UI и API уже поддерживают `cutoutUri`, но реальная вырезка не выполняется. `vision-worker` имеет mock endpoint `/v1/cutout`, который фиксирует provider boundary. Для production нужен внешний segmentation/background-removal провайдер или собственная модель с zero-retention политикой.
+В текущем product slice реальная вырезка выполняется локальным `vision-worker` через `rembg/u2netp`: endpoint `/v1/cutout-image` принимает фото, удаляет фон, обрезает прозрачные поля и возвращает оптимизированный PNG с alpha-каналом. UI сразу использует результат в коллаже. Legacy endpoint `/v1/cutout` оставлен только для совместимости с ранним object-storage flow. Перед массовым production-запуском inline base64 нужно заменить на signed upload в object storage/CDN, добавить AV/NSFW-проверку исходников и лимиты хранения.
 
-## 7. Текущая реализация vertical slice
+## 7. Текущая реализация product slice
 
 В первом working slice уже есть:
 
@@ -107,6 +107,7 @@ LLM не должен самостоятельно решать:
 - генерация `hair`, `makeup` и `stylingSuggestions` внутри `OutfitOption`;
 - мягкий color advice, включая пример для Stockholm style;
 - отображение фото/cutout вещи в flatlay вместо чисто цветовой плитки;
+- реальное удаление фона через `rembg/u2netp` с прозрачным PNG;
 - quick add для украшений, сумки и головного убора;
 - демо-гардероб с цепочкой, crossbody и beanie.
 
