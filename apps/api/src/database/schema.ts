@@ -42,6 +42,7 @@ export const socialAccounts = pgTable(
     ageMode: varchar("age_mode", { length: 24 }).notNull(),
     privacyState: varchar("privacy_state", { length: 16 }).notNull(),
     avatarUri: varchar("avatar_uri", { length: 1024 }),
+    avatarProfile: jsonb("avatar_profile").notNull().default({ skinTone: "WARM", hairColor: "DARK_BROWN", hairStyle: "LONG_STRAIGHT", pose: "EDITORIAL" }),
     styleMix: jsonb("style_mix").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -1,4 +1,4 @@
-import type { Locale, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
+import type { AvatarProfile, Locale, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
 import { generateOutfits } from "@kidz/domain";
 
 import { STARTER_WARDROBE } from "./demo";
@@ -8,6 +8,7 @@ export type FeedPost = {
   nickname: string;
   handle: string;
   avatarColor: string;
+  avatarProfile: AvatarProfile;
   time: string;
   caption: Record<Locale, string>;
   style: string;

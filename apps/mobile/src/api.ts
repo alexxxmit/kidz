@@ -2,6 +2,7 @@ import type {
   AccountPatchInput,
   AiStylistInput,
   AiStylistResponse,
+  AvatarProfile,
   DirectMessage,
   GuestSession,
   GuestSessionInput,
@@ -55,6 +56,7 @@ export type SocialSearchAccount = {
   nickname: string;
   handle: string;
   avatarUri?: string | null;
+  avatarProfile: AvatarProfile;
   styleMix: Array<{ styleId: string; weight: number }>;
   privacyState: string;
 };
@@ -65,7 +67,7 @@ export const searchSocialAccounts = (accessToken: string, query: string) =>
 export const followSocialAccount = (accessToken: string, targetAccountId: string) =>
   request<{ status: "ACCEPTED" | "REQUESTED" }>("/v1/social/follows", { method: "POST", body: JSON.stringify({ targetAccountId }) }, accessToken);
 
-export type FollowRequest = Pick<SocialSearchAccount, "id" | "nickname" | "handle" | "avatarUri" | "styleMix">;
+export type FollowRequest = Pick<SocialSearchAccount, "id" | "nickname" | "handle" | "avatarUri" | "avatarProfile" | "styleMix">;
 
 export const loadFollowRequests = (accessToken: string) =>
   request<{ requests: FollowRequest[] }>("/v1/social/follows/requests", undefined, accessToken);
@@ -80,7 +82,7 @@ export type ConversationSummary = {
   id: string;
   safetyState: string;
   lastMessageAt: string;
-  peer: { id: string; nickname: string; handle: string; avatarUri?: string | null } | null;
+  peer: { id: string; nickname: string; handle: string; avatarUri?: string | null; avatarProfile: AvatarProfile } | null;
   lastMessage: { body: string; createdAt: string } | null;
 };
 
