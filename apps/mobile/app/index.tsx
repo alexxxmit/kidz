@@ -51,11 +51,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   askAiStylist,
+  acceptFollowRequest,
   createGuestSession,
+  createSocialConversation,
   cutoutWardrobePhoto,
   deleteAccount,
   followSocialAccount,
   loadConversations,
+  loadFollowRequests,
   loadMessages,
   loadSocialFeed,
   publishLook,
@@ -64,6 +67,7 @@ import {
   sendDirectMessage,
   updateSocialAccount,
   type ConversationSummary,
+  type FollowRequest,
   type SocialSearchAccount,
 } from "../src/api";
 import { STARTER_WARDROBE } from "../src/demo";
@@ -119,6 +123,7 @@ export default function MiraApp() {
   const [token, setToken] = useState<string>();
   const [wardrobe, setWardrobe] = useState(wardrobePreview);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<FollowRequest[]>([]);
   const [generated, setGenerated] = useState<OutfitOption[]>(() => demoOutfits("stockholm"));
   const [activeLook, setActiveLook] = useState(0);
   const [occasion, setOccasion] = useState("school");
@@ -135,6 +140,13 @@ export default function MiraApp() {
   const currentLook = generated[activeLook] ?? generated[0];
   const searchAccounts = useCallback(async (query: string) => token ? (await searchSocialAccounts(token, query)).accounts : [], [token]);
   const followAccount = useCallback(async (accountId: string) => token ? (await followSocialAccount(token, accountId)).status : "REQUESTED" as const, [token]);
+  const acceptConnection = useCallback(async (accountId: string) => {
+    if (!token) return;
+    await acceptFollowRequest(token, accountId);
+    if (profile.age >= 13) await createSocialConversation(token, accountId);
+    setIncomingRequests((current) => current.filter((request) => request.id !== accountId));
+    notify(tx(locale, "Контакт подтверждён", "Connection approved"));
+  }, [locale, profile.age, token]);
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken()]).then(([saved, savedToken]) => {
@@ -155,8 +167,11 @@ export default function MiraApp() {
   useEffect(() => {
     if (!token || tab !== "circle" || profile.age < 10) return;
     let active = true;
-    void loadSocialFeed(token).then(({ posts: next }) => {
-      if (active) setPosts(next.map((post) => livePost(post, profile.handle)));
+    void Promise.all([loadSocialFeed(token), loadFollowRequests(token)]).then(([feed, requests]) => {
+      if (active) {
+        setPosts(feed.posts.map((post) => livePost(post, profile.handle)));
+        setIncomingRequests(requests.requests);
+      }
     }).catch(() => undefined);
     return () => { active = false; };
   }, [profile.age, profile.handle, tab, token]);
@@ -360,10 +375,12 @@ export default function MiraApp() {
                 locale={locale}
                 age={profile.age}
                 posts={posts}
+                incomingRequests={incomingRequests}
                 onReact={toggleReaction}
                 onRemix={(look) => { setGenerated([look, ...generated]); setActiveLook(0); setTab("create"); }}
                 onSearch={searchAccounts}
                 onFollow={followAccount}
+                onAccept={acceptConnection}
               />
             )}
             {tab === "create" && (
@@ -462,14 +479,16 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
   );
 }
 
-function CircleScreen({ locale, age, posts, onReact, onRemix, onSearch, onFollow }: {
+function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, onSearch, onFollow, onAccept }: {
   locale: Locale;
   age: number;
   posts: FeedPost[];
+  incomingRequests: FollowRequest[];
   onReact: (id: string) => void;
   onRemix: (look: OutfitOption) => void;
   onSearch: (query: string) => Promise<SocialSearchAccount[]>;
   onFollow: (accountId: string) => Promise<"ACCEPTED" | "REQUESTED">;
+  onAccept: (accountId: string) => Promise<void>;
 }) {
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<SocialSearchAccount[]>([]);
@@ -486,6 +505,7 @@ function CircleScreen({ locale, age, posts, onReact, onRemix, onSearch, onFollow
       <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{age < 13 ? tx(locale, "ТОЛЬКО ТВОЙ КРУГ", "YOUR CIRCLE ONLY") : tx(locale, "ТВОЙ STYLE-CIRCLE", "YOUR STYLE CIRCLE")}</Text><Text style={styles.screenTitle}>{tx(locale, "Вдохновение", "Inspiration")}</Text></View><Pressable style={styles.roundSearch}><Search size={20} color={colors.graphite} /></Pressable></View>
       <View style={styles.feedTabs}><Text style={styles.feedTabActive}>{tx(locale, "Для тебя", "For you")}</Text><Text style={styles.feedTab}>{tx(locale, "Друзья", "Friends")}</Text><Text style={styles.feedTab}>{tx(locale, "Челленджи", "Challenges")}</Text></View>
       <View style={styles.searchBar}><Search size={17} color={colors.secondary} /><TextInput value={search} onChangeText={setSearch} placeholder={tx(locale, "Найти @handle или стиль", "Find @handle or a style")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View>
+      {incomingRequests.length > 0 && <View style={styles.requestPanel}><Text style={styles.requestTitle}>{tx(locale, "ХОТЯТ В ТВОЙ КРУГ", "CIRCLE REQUESTS")}</Text>{incomingRequests.map((account) => <View key={account.id} style={styles.searchResult}><View style={[styles.avatar, { backgroundColor: avatarColors[account.handle.length % avatarColors.length] }]}><Text style={styles.avatarLetter}>{account.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{account.nickname}</Text><Text style={styles.postHandle}>@{account.handle}</Text></View><Pressable onPress={() => void onAccept(account.id)} style={styles.acceptButton}><Check size={13} color={colors.paper} /><Text style={styles.acceptButtonText}>{tx(locale, "Принять", "Accept")}</Text></Pressable></View>)}</View>}
       {results.length > 0 && <View style={styles.searchResults}>{results.map((account) => <View key={account.id} style={styles.searchResult}><View style={[styles.avatar, { backgroundColor: avatarColors[account.handle.length % avatarColors.length] }]}><Text style={styles.avatarLetter}>{account.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{account.nickname}</Text><Text style={styles.postHandle}>@{account.handle} · {account.styleMix.map((item) => item.styleId).join(" + ")}</Text></View><Pressable disabled={Boolean(followed[account.id])} onPress={() => { void onFollow(account.id).then((status) => setFollowed((value) => ({ ...value, [account.id]: status }))); }} style={styles.followButton}><Text style={styles.followButtonText}>{followed[account.id] ? tx(locale, "Отправлено", "Requested") : tx(locale, "В круг", "Follow")}</Text></Pressable></View>)}</View>}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendRail}>
         {TREND_STYLES.map((trend) => <View key={trend.id} style={styles.trendCard}><View style={styles.trendPalette}>{trend.colors.map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.trendName}>{trend.title}</Text><Text style={styles.trendChange}>{trend.change}</Text></View>)}
@@ -725,9 +745,13 @@ const styles = StyleSheet.create({
   searchBar: { height: 45, backgroundColor: colors.paper, borderRadius: 15, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
   searchInput: { flex: 1, fontFamily: typography.body, fontSize: 11.5, color: colors.graphite, outlineStyle: "none" } as never,
   searchResults: { marginTop: 8, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
+  requestPanel: { marginTop: 10, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
+  requestTitle: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.ultraviolet, letterSpacing: 1, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 },
   searchResult: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 11, borderBottomWidth: 1, borderBottomColor: colors.line },
   followButton: { minWidth: 68, borderRadius: 13, backgroundColor: colors.violetMist, paddingHorizontal: 10, paddingVertical: 8, alignItems: "center" },
   followButtonText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.ultraviolet },
+  acceptButton: { borderRadius: 13, backgroundColor: colors.ultraviolet, paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 4 },
+  acceptButtonText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.paper },
   trendRail: { gap: 9, paddingVertical: 14 },
   trendCard: { width: 110, height: 78, backgroundColor: colors.paper, borderRadius: 16, overflow: "hidden", paddingBottom: 8, borderWidth: 1, borderColor: colors.line },
   trendPalette: { flexDirection: "row", height: 28 },

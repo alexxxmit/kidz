@@ -141,7 +141,7 @@ export class SocialService {
     if (context.ageYears < 10) throw new ForbiddenException("Friends are unavailable in family mode");
     const target = await this.database.db.select().from(socialAccounts).where(eq(socialAccounts.id, targetAccountId)).limit(1);
     if (!target[0]) throw new NotFoundException("Account not found");
-    const status = context.ageYears >= 13 && target[0].ageYears >= 13 && target[0].privacyState === "PUBLIC" ? "ACCEPTED" : "REQUESTED";
+    const status = "REQUESTED";
     await this.database.db.insert(follows).values({ followerAccountId: context.accountId, targetAccountId, status }).onConflictDoUpdate({ target: [follows.followerAccountId, follows.targetAccountId], set: { status } });
     return { status };
   }

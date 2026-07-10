@@ -65,6 +65,17 @@ export const searchSocialAccounts = (accessToken: string, query: string) =>
 export const followSocialAccount = (accessToken: string, targetAccountId: string) =>
   request<{ status: "ACCEPTED" | "REQUESTED" }>("/v1/social/follows", { method: "POST", body: JSON.stringify({ targetAccountId }) }, accessToken);
 
+export type FollowRequest = Pick<SocialSearchAccount, "id" | "nickname" | "handle" | "avatarUri" | "styleMix">;
+
+export const loadFollowRequests = (accessToken: string) =>
+  request<{ requests: FollowRequest[] }>("/v1/social/follows/requests", undefined, accessToken);
+
+export const acceptFollowRequest = (accessToken: string, followerAccountId: string) =>
+  request<{ status: "ACCEPTED" }>(`/v1/social/follows/${followerAccountId}/decision`, { method: "POST", body: JSON.stringify({ action: "ACCEPT" }) }, accessToken);
+
+export const createSocialConversation = (accessToken: string, targetAccountId: string) =>
+  request<{ id: string }>("/v1/social/conversations", { method: "POST", body: JSON.stringify({ targetAccountId }) }, accessToken);
+
 export type ConversationSummary = {
   id: string;
   safetyState: string;
