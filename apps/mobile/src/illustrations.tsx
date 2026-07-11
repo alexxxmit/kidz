@@ -7,11 +7,12 @@ type GridCell = { column: number; row: number };
 
 const ink = "#24212A";
 const wardrobeGrid = require("../assets/editorial/wardrobe-products-grid-v1.png");
-const beautyGrid = require("../assets/editorial/beauty-reference-grid-v1.png");
+const beautyGrid = require("../assets/editorial/beauty-reference-grid-v2.png");
+const accessoryGrid = require("../assets/editorial/accessory-reference-grid-v1.png");
 
 function PhotoGridCrop({ source, cell, columns, rows, height, rounded = 22, inset = 0 }: { source: number; cell: GridCell; columns: number; rows: number; height: number; rounded?: number; inset?: number }) {
   const cellScale = 100 + inset * 2;
-  return <View style={[styles.photoCrop, { height, borderRadius: rounded }]}><Image source={source} resizeMode="stretch" style={{ position: "absolute", width: `${columns * cellScale}%`, height: `${rows * cellScale}%`, left: `${-(cell.column * cellScale + inset)}%`, top: `${-(cell.row * cellScale + inset)}%` }} /></View>;
+  return <View style={[styles.photoCrop, { height, borderRadius: rounded }]}><Image source={source} resizeMode="stretch" style={{ position: "absolute", width: `${columns * cellScale}%`, height: `${rows * cellScale}%`, left: `${-(cell.column * cellScale + inset)}%`, top: `${-(cell.row * cellScale + inset)}%` }} /><View pointerEvents="none" style={styles.cropEdgeMask} /></View>;
 }
 
 const productCell = (item: Garment): GridCell => {
@@ -36,8 +37,30 @@ const productCell = (item: Garment): GridCell => {
   return { column: 3, row: 4 };
 };
 
+const accessoryCell = (item: Garment): GridCell => {
+  const name = item.name.toLowerCase();
+  if (item.category === "necklace") return /кулон|pendant|long|длин/.test(name) ? { column: 1, row: 0 } : { column: 0, row: 0 };
+  if (item.category === "bracelet") return { column: 2, row: 0 };
+  if (item.category === "ring") return { column: 3, row: 0 };
+  if (item.category === "earrings") return /жемч|pearl/.test(name) ? { column: 0, row: 1 } : { column: 1, row: 1 };
+  if (item.category === "watch") return { column: 2, row: 1 };
+  if (item.category === "belt") return { column: 3, row: 1 };
+  if (item.category === "headband") return { column: 0, row: 2 };
+  if (item.category === "hair_accessory") return { column: 1, row: 2 };
+  if (item.category === "beanie") return { column: 2, row: 2 };
+  if (item.category === "cap") return { column: 3, row: 2 };
+  if (item.category === "tote") return { column: 0, row: 3 };
+  if (item.category === "crossbody_bag") return { column: 1, row: 3 };
+  if (item.category === "backpack") return { column: 2, row: 3 };
+  if (item.slot === "bag") return /спорт|gym|duffle/.test(name) ? { column: 0, row: 4 } : { column: 3, row: 3 };
+  if (item.category === "scarf") return { column: 1, row: 4 };
+  return /очк|glass|sunglass/.test(name) ? { column: 2, row: 4 } : { column: 3, row: 4 };
+};
+
+const isAccessory = (item: Garment) => ["jewelry", "bag", "headwear", "accessory"].includes(item.slot);
+
 export function GarmentIllustration({ item, height = 92 }: { item: Garment; height?: number }) {
-  return <PhotoGridCrop source={wardrobeGrid} cell={productCell(item)} columns={4} rows={5} height={height} rounded={18} inset={5} />;
+  return <PhotoGridCrop source={isAccessory(item) ? accessoryGrid : wardrobeGrid} cell={isAccessory(item) ? accessoryCell(item) : productCell(item)} columns={4} rows={5} height={height} rounded={18} inset={5} />;
 }
 
 export function OccasionIllustration({ occasion, active = false }: { occasion: "school" | "walk" | "party" | "sport"; active?: boolean }) {
@@ -59,20 +82,28 @@ export function SchoolDressCodeIllustration({ mode, active = false }: { mode: "U
 }
 
 const emoStyles = new Set(["emo", "goth", "punk", "egirl", "scene", "grunge", "visual-kei", "whimsigoth", "dark-feminine"]);
-const beautyCell = (kind: "hair" | "makeup" | "accessories", hair: HairProfile, gender: GenderPresentation, styleId: string): GridCell => {
+const hash = (value: string) => [...value].reduce((total, character) => ((total * 31) + character.charCodeAt(0)) >>> 0, 7);
+const beautyCell = (kind: "hair" | "makeup", hair: HairProfile, gender: GenderPresentation, styleId: string, variant: number): GridCell => {
   const emo = emoStyles.has(styleId);
   const masculine = gender === "MASCULINE" || gender === "NEUTRAL" || gender === "NOT_SPECIFIED";
-  const row = emo ? (masculine ? 3 : 2) : (masculine ? 1 : 0);
-  if (kind === "makeup") return { column: 2, row };
-  if (kind === "accessories") return { column: 3, row };
+  if (kind === "makeup") return { column: (masculine ? 3 : 0) + variant, row: emo ? 4 : 1 };
+  const row = emo ? (masculine ? 5 : 3) : (masculine ? 2 : 0);
   const short = hair.length === "BUZZ" || hair.length === "SHORT";
-  return { column: short ? 0 : 1, row };
+  return { column: (short ? 0 : 3) + variant, row };
 };
 
-export function BeautyReference({ kind, hair, gender, styleId, height = 148 }: { kind: "hair" | "makeup" | "accessories"; look: OutfitOption; hair: HairProfile; gender: GenderPresentation; styleId: string; recommendedColor?: HairColor; height?: number }) {
-  return <PhotoGridCrop source={beautyGrid} cell={beautyCell(kind, hair, gender, styleId)} columns={4} rows={4} height={height} rounded={18} />;
+export function BeautyReference({ kind, look, hair, gender, styleId, variantIndex, height = 148 }: { kind: "hair" | "makeup" | "accessories"; look: OutfitOption; hair: HairProfile; gender: GenderPresentation; styleId: string; recommendedColor?: HairColor; variantIndex?: number | undefined; height?: number }) {
+  const identity = `${look.id}|${look.items.map((item) => item.name).join("|")}|${kind}`;
+  const variant = variantIndex === undefined ? hash(identity) % 3 : Math.abs(variantIndex) % 3;
+  if (kind !== "accessories") return <PhotoGridCrop source={beautyGrid} cell={beautyCell(kind, hair, gender, styleId, variant)} columns={6} rows={6} height={height} rounded={18} inset={1} />;
+  const details = look.items.filter(isAccessory).slice(0, 3);
+  const visible = details.length ? details : look.items.slice(0, 1);
+  return <View style={[styles.accessoryPhotoRow, { height }]}>{visible.map((item, index) => <View key={`${item.name}-${index}`} style={styles.accessoryPhotoCell}><PhotoGridCrop source={accessoryGrid} cell={details.length ? accessoryCell(item) : { column: variant, row: 0 }} columns={4} rows={5} height={height} rounded={14} inset={5} /></View>)}</View>;
 }
 
 const styles = StyleSheet.create({
   photoCrop: { width: "100%", overflow: "hidden", backgroundColor: "#F5F1F7" },
+  cropEdgeMask: { position: "absolute", left: 0, right: 0, top: 0, height: 5, backgroundColor: "#F5F1F7" },
+  accessoryPhotoRow: { width: "100%", flexDirection: "row", gap: 3, overflow: "hidden" },
+  accessoryPhotoCell: { flex: 1, minWidth: 0, overflow: "hidden" },
 });
