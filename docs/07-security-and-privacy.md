@@ -7,7 +7,7 @@ MVP — сервис для взрослых, которые управляют 
 До отдельного этапа запрещены:
 
 - независимый детский аккаунт;
-- фото лица/тела ребёнка;
+- постоянное хранение, публикация или использование фото лица/тела ребёнка для обучения моделей;
 - точная геолокация и history;
 - название/адрес школы;
 - открытый social sharing;
@@ -24,6 +24,7 @@ MVP — сервис для взрослых, которые управляют 
 | Measurements | Рост, длина стопы | Highly confidential | Пока нужна fit-функция; удалить по запросу |
 | Garment raw media | Исходное фото | Restricted/quarantine | До 24 часов после успешного анализа |
 | Sanitized garment media | Cutout без EXIF/людей | Confidential | Пока существует вещь |
+| Virtual try-on input/output | Full-body фото + временный AI-рендер | Restricted/transient | Payload storage off; media lifecycle около 1 часа |
 | Schedule | Тип, время, requirements | Highly confidential | Событие + 90 дней; агрегаты без текста дольше |
 | Approximate location | Город/rounded coordinates | Confidential | Пока включена погода |
 | Product events | Accept/swap/wear | Confidential | Raw 13 месяцев; затем агрегирование/удаление |
@@ -44,6 +45,7 @@ MVP — сервис для взрослых, которые управляют 
 - pseudonymous IDs в AI/analytics;
 - отдельная таблица adult identity;
 - отсутствие advertising identifiers.
+- full-body фото отправляется внешнему try-on provider только после явного действия; API не сохраняет само изображение;
 
 Каждое новое поле требует ответа: зачем оно нужно, можно ли вычислить локально, как долго хранить, кто видит, как удалить и изменит ли оно privacy notice.
 
@@ -129,6 +131,8 @@ Image pipeline — отдельная trust boundary:
 7. Quarantine object удаляется автоматически максимум через 24 часа.
 8. Support preview по умолчанию отсутствует.
 9. Download URLs не попадают в logs/analytics.
+
+Virtual try-on — отдельное исключение из garment-only pipeline: full-body фото требуется самой функции. `FAL_KEY` существует только в backend, запрос требует авторизованную сессию и отдельное `photoConsent: true`, fal payload history отключается через `X-Fal-Store-IO: 0`, а media получает lifecycle около часа. До внедрения подтверждённого adult parental-consent gate отправка фото пользователей младше 13 лет блокируется сервером по умолчанию.
 
 ## 8. Threat model
 

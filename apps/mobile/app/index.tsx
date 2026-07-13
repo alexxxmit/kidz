@@ -1,9 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode } from "@kidz/contracts";
+import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode, type TryOnGarmentReference, type TryOnJob } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
@@ -56,6 +57,7 @@ import {
   acceptFollowRequest,
   createGuestSession,
   createSocialConversation,
+  createVirtualTryOn,
   cutoutWardrobePhoto,
   deleteAccount,
   followSocialAccount,
@@ -63,6 +65,7 @@ import {
   loadFollowRequests,
   loadMessages,
   loadSocialFeed,
+  loadVirtualTryOn,
   publishLook,
   reactToLook,
   searchSocialAccounts,
@@ -79,7 +82,13 @@ import { CHALLENGES, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wa
 import { colors, typography } from "../src/theme";
 
 type Tab = "today" | "circle" | "create" | "closet" | "me";
-type Overlay = "none" | "onboarding" | "chat" | "paywall";
+type Overlay = "none" | "onboarding" | "chat" | "paywall" | "tryon";
+type TryOnViewState = {
+  phase: "intro" | "preparing" | "queued" | "processing" | "ready" | "error";
+  resultImageUrl?: string;
+  remainingThisMonth?: number;
+  message?: string;
+};
 type ProfileState = {
   locale: Locale;
   age: number;
@@ -134,6 +143,20 @@ const persistWardrobeImage = async (source: string, localId: string, kind: "sour
   }
   return destination;
 };
+const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const prepareTryOnImage = async (uri: string, kind: "person" | "garment") => {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: kind === "person" ? 1280 : 820 } }],
+    {
+      base64: true,
+      compress: kind === "person" ? 0.68 : 0.72,
+      format: kind === "person" ? ImageManipulator.SaveFormat.JPEG : ImageManipulator.SaveFormat.WEBP,
+    },
+  );
+  if (!result.base64) throw new Error("IMAGE_PREPARATION_FAILED");
+  return `data:image/${kind === "person" ? "jpeg" : "webp"};base64,${result.base64}`;
+};
 
 export default function MiraApp() {
   const { width } = useWindowDimensions();
@@ -153,6 +176,9 @@ export default function MiraApp() {
   const [aiAnswer, setAiAnswer] = useState<string>();
   const [aiLoading, setAiLoading] = useState(false);
   const [toast, setToast] = useState<string>();
+  const [tryOn, setTryOn] = useState<TryOnViewState>({ phase: "intro" });
+  const [allowHairColorPreview, setAllowHairColorPreview] = useState(false);
+  const tryOnRunRef = useRef(0);
   const scrollRef = useRef<ScrollView>(null);
   const locale = profile.locale;
   const mode = ageMode(profile.age);
@@ -229,6 +255,105 @@ export default function MiraApp() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
+  const openTryOn = () => {
+    setTryOn({ phase: "intro" });
+    setAllowHairColorPreview(false);
+    setOverlay("tryon");
+  };
+
+  const closeTryOn = () => {
+    tryOnRunRef.current += 1;
+    setOverlay("none");
+  };
+
+  const startTryOn = async (source: "camera" | "library") => {
+    if (!token || !currentLook) {
+      setTryOn({ phase: "error", message: tx(locale, "Для примерки нужно подключение к аккаунту и интернету.", "Try-on needs an account connection and internet access.") });
+      return;
+    }
+    const photographedItems = currentLook.items.filter((item) => Boolean(item.cutoutUri || item.imageUri));
+    if (!photographedItems.length) {
+      setTryOn({ phase: "error", message: tx(locale, "В этом луке пока только демо-вещи. Сфотографируй хотя бы одну свою вещь — AI будет повторять именно её.", "This look only contains demo pieces. Photograph at least one real item so AI can reproduce it.") });
+      return;
+    }
+    const runId = tryOnRunRef.current + 1;
+    tryOnRunRef.current = runId;
+    try {
+      const pickerOptions: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], quality: 0.7, allowsEditing: false };
+      const picked = source === "camera"
+        ? await ImagePicker.launchCameraAsync({ ...pickerOptions, cameraType: ImagePicker.CameraType.front })
+        : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      if (picked.canceled || !picked.assets[0] || runId !== tryOnRunRef.current) return;
+      setTryOn({ phase: "preparing" });
+      const personImageDataUrl = await prepareTryOnImage(picked.assets[0].uri, "person");
+      const garments: TryOnGarmentReference[] = [];
+      let payloadSize = personImageDataUrl.length;
+      for (const item of photographedItems.slice(0, 6)) {
+        const uri = item.cutoutUri ?? item.imageUri;
+        if (!uri) continue;
+        const imageDataUrl = await prepareTryOnImage(uri, "garment");
+        if (payloadSize + imageDataUrl.length > 12_500_000) continue;
+        garments.push({ name: item.name, slot: item.slot, imageDataUrl });
+        payloadSize += imageDataUrl.length;
+      }
+      if (!garments.length) throw new Error("NO_USABLE_GARMENTS");
+      const job = await createVirtualTryOn(token, {
+        ageYears: profile.age,
+        locale,
+        personImageDataUrl,
+        styleIds: profile.styles,
+        genderPresentation: profile.genderPresentation,
+        garments,
+        hair: {
+          title: currentLook.hair.title,
+          detail: currentLook.hair.detail,
+          recommendedColor: currentLook.hair.recommendedColor,
+          colorFit: currentLook.hair.colorFit,
+        },
+        makeup: {
+          title: currentLook.makeup.title,
+          detail: currentLook.makeup.detail,
+          intensity: currentLook.makeup.intensity,
+          agePolicy: currentLook.makeup.agePolicy,
+        },
+        allowHairColorChange: allowHairColorPreview,
+        photoConsent: true,
+      });
+      if (runId !== tryOnRunRef.current) return;
+      setTryOn({ phase: "queued", remainingThisMonth: job.remainingThisMonth });
+      let latest: TryOnJob = job;
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await delay(2_000);
+        if (runId !== tryOnRunRef.current) return;
+        latest = await loadVirtualTryOn(token, job.id);
+        if (latest.status === "COMPLETED" && latest.resultImageUrl) {
+          setTryOn({ phase: "ready", resultImageUrl: latest.resultImageUrl, remainingThisMonth: latest.remainingThisMonth });
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          return;
+        }
+        if (latest.status === "FAILED") throw new Error(latest.errorCode ?? "TRY_ON_FAILED");
+        setTryOn({ phase: latest.status === "PROCESSING" ? "processing" : "queued", remainingThisMonth: latest.remainingThisMonth });
+      }
+      throw new Error("TRY_ON_TIMEOUT");
+    } catch (error) {
+      if (runId !== tryOnRunRef.current) return;
+      const detail = error instanceof Error ? error.message : "";
+      const notConfigured = detail.includes("FAL_NOT_CONFIGURED") || detail.includes("503");
+      const limited = detail.includes("TRY_ON_MONTHLY_LIMIT") || detail.includes("429");
+      const needsParent = detail.includes("PARENTAL_CONSENT_REQUIRED") || detail.includes("403");
+      setTryOn({
+        phase: "error",
+        message: needsParent
+          ? tx(locale, "Для пользователей младше 13 лет AI-примерку должен подтвердить взрослый семейного аккаунта.", "For users under 13, an adult in the family account must approve AI try-on.")
+          : notConfigured
+            ? tx(locale, "Примерка готова в приложении, но ключ fal.ai ещё не добавлен на сервер.", "Try-on is ready in the app, but the fal.ai key has not been added to the server yet.")
+          : limited
+            ? tx(locale, "Бесплатные примерки на этот месяц закончились.", "This month's free try-ons are used up.")
+            : tx(locale, "Не получилось собрать фоторендер. Проверь фото и попробуй ещё раз.", "The photo render did not complete. Check the photo and try again."),
+      });
+    }
+  };
+
   const finishOnboarding = async (next: ProfileState) => {
     setProfile(next);
     setOverlay("none");
@@ -272,6 +397,8 @@ export default function MiraApp() {
   };
 
   const generateFor = (target = profile, nextOccasion = occasion) => {
+    const photographedWardrobe = wardrobe.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
+    const recommendationWardrobe = photographedWardrobe.length ? photographedWardrobe : wardrobe;
     const options = generateOutfits({
       profile: {
         displayName: target.nickname,
@@ -283,7 +410,7 @@ export default function MiraApp() {
         schoolDressCode: target.age < 6 ? "NOT_APPLICABLE" : target.schoolDressCode,
         styleMix: target.styles.map((styleId) => ({ styleId, weight: 1 / target.styles.length })),
       },
-      wardrobe: wardrobe.map(({ localId: _id, ...item }) => item),
+      wardrobe: recommendationWardrobe.map(({ localId: _id, ...item }) => item),
       weather: { temperatureC: 17, feelsLikeC: 16, rainProbability: 0.2, windKph: 12, occasion: nextOccasion as "school" | "walk" | "sport" | "party" | "everyday" },
     });
     setGenerated(options);
@@ -461,6 +588,7 @@ export default function MiraApp() {
                 setActiveLook={setActiveLook}
                 regenerate={() => generateFor()}
                 publish={publishCurrent}
+                tryOn={openTryOn}
               />
             )}
             {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} addPhoto={addPhoto} />}
@@ -484,6 +612,7 @@ export default function MiraApp() {
               {overlay === "onboarding" && <Onboarding initial={profile} firstRun={!token} onDone={finishOnboarding} onClose={() => setOverlay("none")} />}
               {overlay === "chat" && <ChatScreen locale={locale} age={profile.age} token={token} onClose={() => setOverlay("none")} />}
               {overlay === "paywall" && <Paywall locale={locale} onClose={() => setOverlay("none")} />}
+              {overlay === "tryon" && currentLook && <TryOnScreen locale={locale} look={currentLook} state={tryOn} allowHairColorPreview={allowHairColorPreview} setAllowHairColorPreview={setAllowHairColorPreview} onStart={startTryOn} onReset={() => setTryOn({ phase: "intro" })} onClose={closeTryOn} />}
             </View>
           )}
         </View>
@@ -594,7 +723,7 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   );
 }
 
-function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void }) {
+function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish, tryOn }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void }) {
   const look = outfits[activeLook];
   return (
     <View>
@@ -606,19 +735,51 @@ function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outf
       <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
       {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} profile={profile} referenceVariant={activeLook} /></View>}
       <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
+      <Pressable onPress={tryOn} style={styles.tryOnAction}><View style={styles.tryOnActionIcon}><Camera size={20} color={colors.paper} /></View><View style={{ flex: 1 }}><Text style={styles.tryOnActionTitle}>{tx(locale, "Примерить на своём фото", "Try it on my photo")}</Text><Text style={styles.tryOnActionBody}>{tx(locale, "Одежда + укладка + макияж · AI-фоторендер", "Outfit + hair + makeup · AI photo render")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
       <View style={styles.builderActions}><Pressable onPress={regenerate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Ещё варианты", "New options")}</Text></Pressable><Pressable onPress={publish} style={styles.primaryAction}><ImagePlus size={17} color={colors.paper} /><Text style={styles.primaryActionText}>{tx(locale, "Опубликовать", "Share look")}</Text></Pressable></View>
       <View style={styles.tipCard}><WandSparkles size={19} color={colors.ultraviolet} /><Text style={styles.tipText}>{tx(locale, "Нажми на вещь в готовом образе, чтобы заменить только её — остальной mood сохранится.", "Tap a piece to swap only that item while keeping the mood.")}</Text></View>
     </View>
   );
 }
 
+function TryOnScreen({ locale, look, state, allowHairColorPreview, setAllowHairColorPreview, onStart, onReset, onClose }: { locale: Locale; look: OutfitOption; state: TryOnViewState; allowHairColorPreview: boolean; setAllowHairColorPreview: (value: boolean) => void; onStart: (source: "camera" | "library") => void; onReset: () => void; onClose: () => void }) {
+  const busy = ["preparing", "queued", "processing"].includes(state.phase);
+  const statusTitle = state.phase === "preparing"
+    ? tx(locale, "Готовим фотографии…", "Preparing photos…")
+    : state.phase === "queued"
+      ? tx(locale, "Ждём AI-студию…", "Waiting for the AI studio…")
+      : tx(locale, "Примеряем лук…", "Trying on the look…");
+  return <View style={styles.fullScreen}>
+    <OverlayHeader title={tx(locale, "AI-примерка", "AI try-on")} onClose={onClose} />
+    <ScrollView contentContainerStyle={styles.tryOnContent} showsVerticalScrollIndicator={false}>
+      {state.phase === "intro" && <>
+        <LinearGradient colors={["#21172F", "#5E43C4", "#B9799B"]} style={styles.tryOnHero}>
+          <View style={styles.tryOnHeroIcon}><Camera size={27} color={colors.paper} /></View>
+          <Text style={styles.tryOnHeroTitle}>{tx(locale, "Посмотри лук на себе", "See the look on you")}</Text>
+          <Text style={styles.tryOnHeroBody}>{tx(locale, "AI перенесёт выбранные вещи, укладку и подходящий макияж на твою фотографию — без аватара.", "AI applies the selected pieces, hair styling, and suitable makeup to your photo — no avatar.")}</Text>
+        </LinearGradient>
+        <View style={styles.photoGuideCard}><Text style={styles.photoGuideTitle}>{tx(locale, "Для лучшего результата", "For the best result")}</Text><Text style={styles.photoGuideLine}>1. {tx(locale, "Фото в полный рост, прямо перед камерой", "Use a front-facing full-body photo")}</Text><Text style={styles.photoGuideLine}>2. {tx(locale, "Хороший свет, руки и ноги видны", "Use good light with arms and legs visible")}</Text><Text style={styles.photoGuideLine}>3. {tx(locale, "Оставайся полностью одетой/одетым", "Stay fully clothed")}</Text></View>
+        {look.hair.colorFit === "optional_shift" && <Pressable onPress={() => setAllowHairColorPreview(!allowHairColorPreview)} style={styles.hairPreviewToggle}><View style={[styles.toggleCheck, allowHairColorPreview && styles.toggleCheckActive]}>{allowHairColorPreview && <Check size={14} color={colors.paper} />}</View><View style={{ flex: 1 }}><Text style={styles.hairPreviewTitle}>{tx(locale, "Показать рекомендованный цвет волос", "Preview the recommended hair color")}</Text><Text style={styles.hairPreviewBody}>{tx(locale, "По умолчанию AI сохранит твой настоящий цвет", "AI keeps your real hair color by default")}</Text></View></Pressable>}
+        <View style={styles.tryOnSourceActions}><Pressable onPress={() => onStart("camera")} style={styles.tryOnCameraButton}><Camera size={18} color={colors.paper} /><Text style={styles.tryOnCameraText}>{tx(locale, "Сделать фото", "Take a photo")}</Text></Pressable><Pressable onPress={() => onStart("library")} style={styles.tryOnLibraryButton}><ImagePlus size={18} color={colors.graphite} /><Text style={styles.tryOnLibraryText}>{tx(locale, "Выбрать фото", "Choose a photo")}</Text></Pressable></View>
+        <View style={styles.tryOnPrivacy}><LockKeyhole size={16} color={colors.ultraviolet} /><Text style={styles.tryOnPrivacyText}>{tx(locale, "Фото отправляется в fal.ai только после твоего нажатия, не публикуется и удаляется из временного хранилища примерно через час.", "Your photo is sent to fal.ai only after you tap, is never posted, and expires from temporary storage in about an hour.")}</Text></View>
+      </>}
+      {busy && <View style={styles.tryOnStatusCard}><ActivityIndicator size="large" color={colors.ultraviolet} /><Text style={styles.tryOnStatusTitle}>{statusTitle}</Text><Text style={styles.tryOnStatusBody}>{tx(locale, "Обычно это занимает меньше минуты. Пока не закрывай экран; фото нигде не публикуется.", "This usually takes under a minute. Keep this screen open; nothing is published automatically.")}</Text></View>}
+      {state.phase === "ready" && state.resultImageUrl && <><Image source={{ uri: state.resultImageUrl }} style={styles.tryOnResult} resizeMode="cover" /><Text style={styles.tryOnResultNote}>{tx(locale, "Это AI-визуализация: детали ткани могут немного отличаться от оригинала.", "This is an AI visualization, so fabric details can differ slightly from the original.")}</Text><Pressable onPress={onReset} style={styles.tryOnAgain}><Shuffle size={17} color={colors.paper} /><Text style={styles.tryOnAgainText}>{tx(locale, "Примерить ещё раз", "Try again")}</Text></Pressable></>}
+      {state.phase === "error" && <View style={styles.tryOnStatusCard}><View style={styles.tryOnErrorIcon}><X size={24} color={colors.coral} /></View><Text style={styles.tryOnStatusTitle}>{tx(locale, "Примерка не запустилась", "Try-on did not start")}</Text><Text style={styles.tryOnStatusBody}>{state.message}</Text><Pressable onPress={onReset} style={styles.tryOnAgain}><Text style={styles.tryOnAgainText}>{tx(locale, "Попробовать снова", "Try again")}</Text></Pressable></View>}
+      {state.remainingThisMonth !== undefined && state.phase === "ready" && <Text style={styles.tryOnRemaining}>{tx(locale, `Осталось в этом месяце: ${state.remainingThisMonth}`, `Remaining this month: ${state.remainingThisMonth}`)}</Text>}
+    </ScrollView>
+  </View>;
+}
+
 function ClosetScreen({ locale, wardrobe, addPhoto }: { locale: Locale; wardrobe: typeof wardrobePreview; addPhoto: () => void }) {
   const [filter, setFilter] = useState("all");
-  const visible = filter === "all" ? wardrobe : wardrobe.filter((item) => item.slot === filter);
+  const photographed = wardrobe.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
+  const activeWardrobe = photographed.length ? photographed : wardrobe;
+  const visible = filter === "all" ? activeWardrobe : activeWardrobe.filter((item) => item.slot === filter);
   return (
     <View>
       <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{tx(locale, "ТВОИ РЕАЛЬНЫЕ ВЕЩИ", "YOUR REAL PIECES")}</Text><Text style={styles.screenTitle}>{tx(locale, "Шкаф", "Closet")}</Text></View><Pressable onPress={addPhoto} style={styles.addRound}><Plus size={22} color={colors.paper} /></Pressable></View>
-      <View style={styles.closetStats}><View><Text style={styles.statValue}>{wardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>86%</Text><Text style={styles.statLabel}>{tx(locale, "носятся", "in rotation")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>42</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
+      <View style={styles.closetStats}><View><Text style={styles.statValue}>{activeWardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{photographed.length ? "100%" : "DEMO"}</Text><Text style={styles.statLabel}>{tx(locale, photographed.length ? "твои" : "пример", photographed.length ? "yours" : "sample")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{photographed.length ? "AI" : "3"}</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
       <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Сфотографируй вещь", "Photograph a piece")}</Text><Text style={styles.scanBody}>{tx(locale, "AI вырежет фон и заполнит карточку", "AI removes the background and fills the details")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>{[["all", tx(locale, "Все", "All")], ["top", tx(locale, "Верх", "Tops")], ["bottom", tx(locale, "Низ", "Bottoms")], ["footwear", tx(locale, "Обувь", "Shoes")], ["bag", tx(locale, "Сумки", "Bags")], ["jewelry", tx(locale, "Украшения", "Jewelry")]].map(([id, label]) => <Pressable key={id} onPress={() => setFilter(id!)} style={[styles.filterChip, filter === id && styles.filterChipActive]}><Text style={[styles.filterText, filter === id && styles.filterTextActive]}>{label}</Text></Pressable>)}</ScrollView>
       <View style={styles.closetGrid}>{visible.map((item) => <View key={item.localId} style={styles.closetItem}><View style={styles.closetArt}>{item.imageUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <GarmentIllustration item={item} height={104} />}{item.imageProcessingState === "PENDING_CUTOUT" && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>AI</Text></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={styles.closetMeta}>{item.careState === "CLEAN" ? tx(locale, "готово", "ready") : item.careState.toLowerCase()}</Text></View>)}</View>
@@ -918,6 +1079,10 @@ const styles = StyleSheet.create({
   lookDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#CBC6D1" },
   lookDotActive: { width: 22, backgroundColor: colors.ultraviolet },
   builderActions: { flexDirection: "row", gap: 9 },
+  tryOnAction: { minHeight: 70, borderRadius: 21, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, marginBottom: 10 },
+  tryOnActionIcon: { width: 42, height: 42, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.ultraviolet },
+  tryOnActionTitle: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.paper },
+  tryOnActionBody: { fontFamily: typography.body, fontSize: 8.8, color: "#CFC8D8", marginTop: 3 },
   tipCard: { flexDirection: "row", gap: 10, borderRadius: 18, backgroundColor: colors.violetMist, padding: 13, marginTop: 13 },
   tipText: { flex: 1, fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary },
   addRound: { width: 45, height: 45, borderRadius: 17, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
@@ -980,6 +1145,35 @@ const styles = StyleSheet.create({
   toastText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.paper, textAlign: "center" },
   overlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: colors.porcelain },
   fullScreen: { flex: 1, backgroundColor: colors.porcelain },
+  tryOnContent: { paddingHorizontal: 18, paddingBottom: 38 },
+  tryOnHero: { minHeight: 238, borderRadius: 28, padding: 22, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  tryOnHeroIcon: { width: 58, height: 58, borderRadius: 21, backgroundColor: "#FFFFFF1C", alignItems: "center", justifyContent: "center" },
+  tryOnHeroTitle: { fontFamily: typography.display, fontSize: 25, lineHeight: 31, color: colors.paper, textAlign: "center", marginTop: 15 },
+  tryOnHeroBody: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 18, color: "#E7E0ED", textAlign: "center", marginTop: 8 },
+  photoGuideCard: { borderRadius: 21, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 15, marginTop: 12, gap: 7 },
+  photoGuideTitle: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite, marginBottom: 2 },
+  photoGuideLine: { fontFamily: typography.body, fontSize: 9.8, lineHeight: 15, color: colors.secondary },
+  hairPreviewToggle: { minHeight: 68, borderRadius: 19, backgroundColor: colors.violetMist, flexDirection: "row", alignItems: "center", gap: 11, padding: 13, marginTop: 10 },
+  toggleCheck: { width: 25, height: 25, borderRadius: 9, borderWidth: 1.5, borderColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  toggleCheckActive: { backgroundColor: colors.ultraviolet },
+  hairPreviewTitle: { fontFamily: typography.bodySemibold, fontSize: 9.8, color: colors.graphite },
+  hairPreviewBody: { fontFamily: typography.body, fontSize: 8.7, color: colors.secondary, marginTop: 3 },
+  tryOnSourceActions: { gap: 9, marginTop: 14 },
+  tryOnCameraButton: { height: 53, borderRadius: 18, backgroundColor: colors.ultraviolet, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  tryOnCameraText: { fontFamily: typography.bodySemibold, fontSize: 11.5, color: colors.paper },
+  tryOnLibraryButton: { height: 51, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  tryOnLibraryText: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite },
+  tryOnPrivacy: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, marginTop: 10 },
+  tryOnPrivacyText: { flex: 1, fontFamily: typography.body, fontSize: 8.5, lineHeight: 13.5, color: colors.secondary },
+  tryOnStatusCard: { minHeight: 360, alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
+  tryOnStatusTitle: { fontFamily: typography.displaySoft, fontSize: 17, color: colors.graphite, textAlign: "center", marginTop: 18 },
+  tryOnStatusBody: { fontFamily: typography.body, fontSize: 10.5, lineHeight: 17, color: colors.secondary, textAlign: "center", marginTop: 8 },
+  tryOnErrorIcon: { width: 58, height: 58, borderRadius: 21, backgroundColor: "#FFE5EA", alignItems: "center", justifyContent: "center" },
+  tryOnResult: { width: "100%", aspectRatio: 3 / 4, borderRadius: 27, backgroundColor: colors.violetMist },
+  tryOnResultNote: { fontFamily: typography.body, fontSize: 9, lineHeight: 14, color: colors.secondary, textAlign: "center", paddingHorizontal: 16, marginTop: 10 },
+  tryOnAgain: { height: 50, borderRadius: 17, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 22, marginTop: 15, alignSelf: "stretch" },
+  tryOnAgainText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.paper },
+  tryOnRemaining: { fontFamily: typography.bodyMedium, fontSize: 8.8, color: colors.secondary, textAlign: "center", marginTop: 9 },
   overlayHeader: { height: 62, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   overlayTitle: { fontFamily: typography.displaySoft, fontSize: 16, color: colors.graphite },
   closeButton: { width: 42, height: 42, borderRadius: 17, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.line },

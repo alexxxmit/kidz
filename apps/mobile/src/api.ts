@@ -9,6 +9,8 @@ import type {
   LookPostInput,
   OutfitOption,
   ProfileInput,
+  TryOnJob,
+  TryOnSubmitInput,
   WardrobeItemInput,
   WardrobeVisionInput,
   WardrobeVisionResult,
@@ -108,6 +110,12 @@ export const cutoutWardrobePhoto = async (imageBase64: string) => {
 
 export const analyzeWardrobePhoto = (accessToken: string, input: WardrobeVisionInput) =>
   request<WardrobeVisionResult>("/v1/ai/wardrobe-vision", { method: "POST", body: JSON.stringify(input) }, accessToken);
+
+export const createVirtualTryOn = (accessToken: string, input: TryOnSubmitInput) =>
+  request<TryOnJob>("/v1/ai/try-on", { method: "POST", body: JSON.stringify(input) }, accessToken);
+
+export const loadVirtualTryOn = (accessToken: string, jobId: string) =>
+  request<TryOnJob>(`/v1/ai/try-on/${jobId}`, undefined, accessToken);
 
 export const persistAndGenerate = async (
   profile: ProfileInput,

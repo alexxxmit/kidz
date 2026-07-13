@@ -2,7 +2,7 @@
 
 MIRA — рабочий consumer-бренд адаптивного AI-гардероба и безопасной style-сети для пользователей от 0 до 18 лет. `kidz` остаётся техническим именем репозитория до name/trademark check.
 
-Текущий product slice включает age-adaptive onboarding, Today, Circle, Create, Closet и Me, реальные garment cutouts, style-aware outfit engine, AI-стилиста, social data model/API, закрытые чаты 13+, moderation boundary и freemium paywall.
+Текущий product slice включает age-adaptive onboarding, Today, Circle, Create, Closet и Me, реальные garment cutouts, style-aware outfit engine, AI-стилиста, приватную fal.ai-примерку на фото, social data model/API, закрытые чаты 13+, moderation boundary и freemium paywall.
 
 ## Документация
 
@@ -45,5 +45,8 @@ pnpm dev
 4. Выбирает один или несколько стилей — от минимализма и преппи до эмо, панка и стокгольмского стиля.
 5. Добавляет одежду, обувь, украшения, сумки и головные уборы из демо-набора или фотографирует реальные вещи.
 6. Получает три полных образа с объяснением сочетания, погодной уместности, аксессуаров, направления причёски и makeup-референса.
+7. Может сделать фото в полный рост и получить временный AI-рендер выбранного лука, укладки и возрастно-уместного макияжа на себе.
 
 Cutout реальных вещей выполняет vision-worker через `rembg/u2netp`; результат возвращается как прозрачный PNG и сразу используется в коллаже. Для production остаётся перенести media из inline data URL в object storage/CDN.
+
+AI-примерка вызывается только через серверный `POST /v1/ai/try-on`: `FAL_KEY` никогда не попадает в Expo-клиент. Входные JSON payloads не сохраняются у fal.ai, результат получает lifecycle около одного часа. Бесплатный план получает 3 рендера в месяц, PLUS — 40; лимиты настраиваются переменными окружения. Для пользователей младше 13 лет внешний рендер по умолчанию заблокирован до внедрения подтверждённого parental-consent gate.

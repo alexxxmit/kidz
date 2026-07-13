@@ -50,8 +50,8 @@ export const CHALLENGES = [
 ];
 
 export const PLUS_FEATURES = {
-  ru: ["Безлимитные диалоги с AI-стилистом", "Капсулы и планирование сезона", "Умный wishlist и разбор покупок", "Расширенная аналитика гардероба"],
-  en: ["Unlimited AI stylist chats", "Capsules and seasonal planning", "Smart wishlist and purchase check", "Advanced closet insights"],
+  ru: ["40 AI-примерок на своих фото в месяц", "Безлимитные диалоги с AI-стилистом", "Капсулы и планирование сезона", "Умный wishlist и разбор покупок"],
+  en: ["40 AI try-ons on your photos each month", "Unlimited AI stylist chats", "Capsules and seasonal planning", "Smart wishlist and purchase check"],
 };
 
 export const wardrobePreview = STARTER_WARDROBE.map((item, index) => ({

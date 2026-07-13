@@ -361,6 +361,62 @@ export const WardrobeVisionResultSchema = z.object({
 });
 export type WardrobeVisionResult = z.infer<typeof WardrobeVisionResultSchema>;
 
+const TryOnImageDataUrlSchema = z
+  .string()
+  .startsWith("data:image/")
+  .max(5_000_000);
+
+export const TryOnGarmentReferenceSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  slot: GarmentSlotSchema,
+  imageDataUrl: TryOnImageDataUrlSchema,
+});
+export type TryOnGarmentReference = z.infer<typeof TryOnGarmentReferenceSchema>;
+
+export const TryOnSubmitInputSchema = z
+  .object({
+    ageYears: z.number().int().min(0).max(18),
+    locale: LocaleSchema,
+    personImageDataUrl: TryOnImageDataUrlSchema,
+    styleIds: z.array(z.string().trim().min(1).max(40)).min(1).max(3),
+    genderPresentation: GenderPresentationSchema,
+    garments: z.array(TryOnGarmentReferenceSchema).min(1).max(6),
+    hair: z.object({
+      title: z.string().trim().min(1).max(120),
+      detail: z.string().trim().min(1).max(360),
+      recommendedColor: HairColorSchema,
+      colorFit: z.enum(["already_fits", "optional_shift", "not_applicable"]),
+    }),
+    makeup: z.object({
+      title: z.string().trim().min(1).max(120),
+      detail: z.string().trim().min(1).max(360),
+      intensity: z.enum(["none", "light", "medium", "bold"]),
+      agePolicy: z.enum(["not_suggested", "optional", "style_reference"]),
+    }),
+    allowHairColorChange: z.boolean().default(false),
+    photoConsent: z.literal(true),
+  })
+  .superRefine((input, context) => {
+    const payloadSize = input.personImageDataUrl.length + input.garments.reduce((sum, garment) => sum + garment.imageDataUrl.length, 0);
+    if (payloadSize > 13_000_000) {
+      context.addIssue({ code: "custom", path: ["garments"], message: "Combined image payload exceeds 13 MB" });
+    }
+  });
+export type TryOnSubmitInput = z.infer<typeof TryOnSubmitInputSchema>;
+
+export const TryOnJobStatusSchema = z.enum(["QUEUED", "PROCESSING", "COMPLETED", "FAILED"]);
+export type TryOnJobStatus = z.infer<typeof TryOnJobStatusSchema>;
+
+export type TryOnJob = {
+  id: string;
+  status: TryOnJobStatus;
+  provider: "fal";
+  resultImageUrl?: string;
+  errorCode?: string;
+  expiresAt: string;
+  remainingThisMonth: number;
+};
+
 export type ApiError = {
   code: string;
   message: string;

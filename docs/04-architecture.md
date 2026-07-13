@@ -148,6 +148,30 @@ sequenceDiagram
     API->>Push: Generic notification without child data
 ~~~
 
+### AI-примерка на фотографии
+
+~~~mermaid
+sequenceDiagram
+    participant App as Expo iOS
+    participant API as NestJS API
+    participant DB as PostgreSQL
+    participant Fal as fal.ai queue
+
+    App->>App: Сжать full-body фото и cutout выбранных вещей
+    App->>API: POST /v1/ai/try-on + consent
+    API->>API: Проверить возраст, сессию и месячный лимит
+    API->>Fal: Person + garment refs + hair/makeup prompt
+    Note over API,Fal: FAL_KEY только на сервере<br/>X-Fal-Store-IO: 0<br/>media lifecycle ≈ 1 час
+    Fal-->>API: request_id
+    API->>DB: Сохранить только job metadata
+    App->>API: GET /v1/ai/try-on/:id
+    API->>Fal: Queue status/result
+    Fal-->>API: Временный result URL
+    API-->>App: COMPLETED + resultImageUrl
+~~~
+
+Подбор вещей остаётся детерминированным domain engine: он ранжирует реальные доступные вещи по стилю, подаче, дресс-коду, погоде и ротации. fal.ai не решает, что надеть, а визуализирует уже выбранный образ. Распознавание фото вещи может использовать vision-модель, а вырезание фона выполняет `rembg/u2netp` без LLM.
+
 ## 7. Weather architecture
 
 WeatherProvider возвращает единый формат и скрывает поставщика. Для пилота первый кандидат — WeatherKit REST: Apple разрешает REST для других платформ и включает до 500,000 запросов в месяц в Apple Developer membership. Источник: [WeatherKit](https://developer.apple.com/weatherkit/).

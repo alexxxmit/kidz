@@ -196,6 +196,13 @@ const combinations = (
     ...ranked(available.filter((item) => item.slot === "jewelry" || item.slot === "accessory"), 2),
   ];
   const bags = optionalBySlot("bag");
+  const accessorySets: Array<Array<CandidateItem | undefined>> = [
+    [undefined, undefined, undefined],
+    [headwear[1], jewelry[1], bags[1]],
+    [headwear[2], jewelry[2], bags[2]],
+    [undefined, jewelry[1], bags[2]],
+    [headwear[1], jewelry[2], undefined],
+  ];
   const bodies: CandidateItem[][] = [
     ...tops.flatMap((top) => bottoms.map((bottom) => [top, bottom])),
     ...onePieces.map((item) => [item]),
@@ -206,14 +213,10 @@ const combinations = (
     for (const shoe of shoes.length ? shoes : [undefined]) {
       for (const mid of mids) {
         for (const outer of outers) {
-          for (const hat of headwear) {
-            for (const jewel of jewelry) {
-              for (const bag of bags) {
-                result.push(
-                  [...body, shoe, mid, outer, hat, jewel, bag].filter(Boolean) as CandidateItem[],
-                );
-              }
-            }
+          for (const accessories of accessorySets) {
+            result.push(
+              [...body, shoe, mid, outer, ...accessories].filter(Boolean) as CandidateItem[],
+            );
           }
         }
       }
