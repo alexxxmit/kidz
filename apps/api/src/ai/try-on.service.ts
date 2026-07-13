@@ -20,6 +20,12 @@ type FalResult = {
   images?: Array<{ url?: string }>;
 };
 
+type FalSubmitResponse = {
+  request_id?: string;
+  status_url?: string;
+  response_url?: string;
+};
+
 const safeModelId = () => {
   const configured = process.env.FAL_TRY_ON_MODEL ?? DEFAULT_MODEL;
   return /^[a-z0-9._-]+\/[a-z0-9._/-]+$/i.test(configured) ? configured : DEFAULT_MODEL;
@@ -33,6 +39,16 @@ const falHeaders = (key: string, includeJson = false): Record<string, string> =>
 });
 
 const cleanPromptValue = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
+
+export const validFalQueueUrl = (value: unknown): string | undefined => {
+  if (typeof value !== "string" || value.length > 2048) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "queue.fal.run" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export const buildTryOnPrompt = (input: TryOnSubmitInput) => {
   const ageBand = input.ageYears < 13 ? "a child under 13" : input.ageYears < 18 ? "a teenager" : "an 18-year-old adult";
@@ -91,8 +107,10 @@ export class TryOnService {
       signal: AbortSignal.timeout(30_000),
     }).catch(() => undefined);
     if (!response?.ok) throw new ServiceUnavailableException({ code: "FAL_SUBMIT_FAILED", message: "Could not start virtual try-on" });
-    const payload = await response.json().catch(() => undefined) as { request_id?: string } | undefined;
-    if (!payload?.request_id || payload.request_id.length > 128) {
+    const payload = await response.json().catch(() => undefined) as FalSubmitResponse | undefined;
+    const falStatusUrl = validFalQueueUrl(payload?.status_url);
+    const falResponseUrl = validFalQueueUrl(payload?.response_url);
+    if (!payload?.request_id || payload.request_id.length > 128 || !falStatusUrl || !falResponseUrl) {
       throw new ServiceUnavailableException({ code: "FAL_INVALID_RESPONSE", message: "Invalid virtual try-on response" });
     }
 
@@ -103,6 +121,8 @@ export class TryOnService {
       userId: context.userId,
       falRequestId: payload.request_id,
       modelId: model,
+      falStatusUrl,
+      falResponseUrl,
       status: "QUEUED",
       expiresAt,
     });
@@ -118,7 +138,13 @@ export class TryOnService {
 
     const key = process.env.FAL_KEY;
     if (!key) throw new ServiceUnavailableException({ code: "FAL_NOT_CONFIGURED", message: "Virtual try-on is not configured" });
-    const statusResponse = await fetch(`https://queue.fal.run/${job.modelId}/requests/${job.falRequestId}/status`, {
+    const falStatusUrl = validFalQueueUrl(job.falStatusUrl);
+    const falResponseUrl = validFalQueueUrl(job.falResponseUrl);
+    if (!falStatusUrl || !falResponseUrl) {
+      await this.update(job.id, "FAILED", undefined, "FAL_QUEUE_URL_MISSING");
+      return this.shape({ ...job, status: "FAILED", errorCode: "FAL_QUEUE_URL_MISSING" }, remainingThisMonth);
+    }
+    const statusResponse = await fetch(falStatusUrl, {
       headers: falHeaders(key),
       signal: AbortSignal.timeout(15_000),
     }).catch(() => undefined);
@@ -139,7 +165,7 @@ export class TryOnService {
       return this.shape({ ...job, status: "FAILED", errorCode }, remainingThisMonth);
     }
 
-    const resultResponse = await fetch(`https://queue.fal.run/${job.modelId}/requests/${job.falRequestId}`, {
+    const resultResponse = await fetch(falResponseUrl, {
       headers: falHeaders(key),
       signal: AbortSignal.timeout(15_000),
     }).catch(() => undefined);

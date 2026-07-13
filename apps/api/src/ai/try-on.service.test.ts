@@ -1,7 +1,7 @@
 import type { TryOnSubmitInput } from "@kidz/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildTryOnPrompt } from "./try-on.service.js";
+import { buildTryOnPrompt, validFalQueueUrl } from "./try-on.service.js";
 
 const input: TryOnSubmitInput = {
   ageYears: 15,
@@ -29,5 +29,14 @@ describe("buildTryOnPrompt", () => {
   it("does not add makeup to a young child", () => {
     const prompt = buildTryOnPrompt({ ...input, ageYears: 8 });
     expect(prompt).toContain("Do not add cosmetic makeup");
+  });
+});
+
+describe("validFalQueueUrl", () => {
+  it("accepts only HTTPS queue URLs returned by fal", () => {
+    expect(validFalQueueUrl("https://queue.fal.run/fal-ai/nano-banana/requests/request-id/status"))
+      .toBe("https://queue.fal.run/fal-ai/nano-banana/requests/request-id/status");
+    expect(validFalQueueUrl("https://example.com/fal-ai/nano-banana/requests/request-id/status")).toBeUndefined();
+    expect(validFalQueueUrl("http://queue.fal.run/fal-ai/nano-banana/requests/request-id/status")).toBeUndefined();
   });
 });
