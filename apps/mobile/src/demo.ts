@@ -3,6 +3,32 @@ import type { WardrobeItemInput } from "@kidz/contracts";
 type DemoItem = Omit<WardrobeItemInput, "profileId">;
 
 export const STARTER_WARDROBE: DemoItem[] = [
+  // Stockholm capsule based on the current teen/young-adult interpretation:
+  // soft knitwear, stripes, relaxed denim, compact skirts and warm leather details.
+  { name: "Тонкий лонгслив в синюю полоску", category: "tshirt", slot: "top", colors: ["#F3EFE5", "#1E2A43"], warmth: 1, styleIds: ["stockholm", "coastal", "parisian"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Молочный топ в рубчик", category: "tshirt", slot: "top", colors: ["#F3EFE5"], warmth: 1, styleIds: ["stockholm", "clean-girl", "minimal"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серый кардиган-топ", category: "sweater", slot: "top", colors: ["#B7B5B0"], warmth: 1, styleIds: ["stockholm", "clean-girl", "normcore"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серый кардиган на пуговицах", category: "sweater", slot: "mid_layer", colors: ["#B8B7B3"], warmth: 1, styleIds: ["stockholm", "clean-girl", "minimal"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Бежевый V-neck свитер", category: "sweater", slot: "mid_layer", colors: ["#C8BBA8"], warmth: 3, styleIds: ["stockholm", "coastal", "quiet-luxury"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Объёмный свитер в синюю полоску", category: "sweater", slot: "mid_layer", colors: ["#EEE8D8", "#24324C"], warmth: 3, styleIds: ["stockholm", "coastal"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тонкий серый кардиган", category: "sweater", slot: "mid_layer", colors: ["#C3C3C0"], warmth: 1, styleIds: ["stockholm", "clean-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Светло-голубые широкие джинсы", category: "jeans", slot: "bottom", colors: ["#AFC3D1"], warmth: 2, styleIds: ["stockholm", "normcore", "coastal"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Молочные свободные брюки", category: "trousers", slot: "bottom", colors: ["#EDE8DE"], warmth: 2, styleIds: ["stockholm", "minimal", "quiet-luxury"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Белая мини-юбка с кружевом", category: "skirt", slot: "bottom", colors: ["#F3EFE7"], warmth: 1, styleIds: ["stockholm", "coquette", "romantic"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серый укороченный блейзер", category: "jacket", slot: "outerwear", colors: ["#84847F"], warmth: 2, styleIds: ["stockholm", "classic", "preppy"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Длинное графитовое пальто", category: "coat", slot: "outerwear", colors: ["#343536"], warmth: 4, styleIds: ["stockholm", "classic", "quiet-luxury"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Короткие песочные угги", category: "boots", slot: "footwear", colors: ["#B58C62"], warmth: 3, styleIds: ["stockholm", "soft-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Высокие чёрные сапоги", category: "boots", slot: "footwear", colors: ["#171718"], warmth: 2, styleIds: ["stockholm", "classic", "dark-feminine"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Коричневые кожаные балетки", category: "shoes", slot: "footwear", colors: ["#593A2A"], warmth: 1, styleIds: ["stockholm", "balletcore", "classic"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тонкий золотой кулон", category: "necklace", slot: "jewelry", colors: ["#C7A45B"], warmth: 0, styleIds: ["stockholm", "clean-girl", "classic"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Маленькие золотые кольца", category: "earrings", slot: "jewelry", colors: ["#C7A45B"], warmth: 0, styleIds: ["stockholm", "clean-girl", "classic"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Шоколадная замшевая сумка", category: "bag", slot: "bag", colors: ["#543522"], warmth: 0, styleIds: ["stockholm", "boho"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Чёрная мягкая city-сумка", category: "bag", slot: "bag", colors: ["#171718"], warmth: 0, styleIds: ["stockholm", "indie-sleaze"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Бордовая сумка на плечо", category: "bag", slot: "bag", colors: ["#6D2634"], warmth: 0, styleIds: ["stockholm", "classic"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Молочные вязаные гетры", category: "accessory", slot: "accessory", colors: ["#EFE9DB"], warmth: 1, styleIds: ["stockholm", "balletcore"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тёмно-синий ободок", category: "headband", slot: "headwear", colors: ["#24324C"], warmth: 0, styleIds: ["stockholm", "preppy"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Пыльно-розовый шерстяной шарф", category: "scarf", slot: "accessory", colors: ["#CFA9AA"], warmth: 2, styleIds: ["stockholm", "soft-girl"], careState: "CLEAN", fitState: "FITS" },
+
   { name: "Молочная рубашка оверсайз", category: "shirt", slot: "top", colors: ["#EEEAE2"], warmth: 1, styleIds: ["stockholm", "preppy", "minimal", "classic", "school-uniform"], careState: "CLEAN", fitState: "FITS" },
   { name: "Белый лонгслив в рубчик", category: "tshirt", slot: "top", colors: ["#F4F1EA"], warmth: 1, styleIds: ["stockholm", "minimal", "acubi", "classic"], careState: "CLEAN", fitState: "FITS" },
   { name: "Чёрная футболка с графикой", category: "tshirt", slot: "top", colors: ["#111217", "#D8D9DF"], warmth: 1, styleIds: ["emo", "streetwear", "punk", "grunge"], careState: "CLEAN", fitState: "FITS" },
@@ -25,7 +51,7 @@ export const STARTER_WARDROBE: DemoItem[] = [
   { name: "Графитовые прямые брюки", category: "trousers", slot: "bottom", colors: ["#343940"], warmth: 2, styleIds: ["stockholm", "preppy", "classic", "school-uniform"], careState: "CLEAN", fitState: "FITS" },
   { name: "Светлые широкие брюки", category: "trousers", slot: "bottom", colors: ["#CBC7BE"], warmth: 2, styleIds: ["stockholm", "minimal", "preppy", "classic"], careState: "CLEAN", fitState: "FITS" },
   { name: "Серые карго с прямым кроем", category: "trousers", slot: "bottom", colors: ["#6A707A"], warmth: 2, styleIds: ["techwear", "streetwear", "acubi", "skater"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Тёмно-синяя джинсовая юбка", category: "skirt", slot: "bottom", colors: ["#283C59"], warmth: 1, styleIds: ["stockholm", "preppy", "vintage", "coquette"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тёмно-синяя джинсовая юбка", category: "skirt", slot: "bottom", colors: ["#283C59"], warmth: 1, styleIds: ["preppy", "vintage", "coquette"], careState: "CLEAN", fitState: "FITS" },
   { name: "Серая плиссированная юбка", category: "skirt", slot: "bottom", colors: ["#8D929B"], warmth: 1, styleIds: ["emo", "preppy", "academia", "kawaii", "school-uniform"], careState: "CLEAN", fitState: "FITS" },
   { name: "Чёрные спортивные джоггеры", category: "trousers", slot: "bottom", colors: ["#20242D"], warmth: 2, styleIds: ["sporty", "streetwear", "hiphop"], careState: "CLEAN", fitState: "FITS" },
   { name: "Коричневые вельветовые брюки", category: "trousers", slot: "bottom", colors: ["#7C5A3C"], warmth: 3, styleIds: ["vintage", "academia", "classic"], careState: "CLEAN", fitState: "FITS" },
@@ -48,7 +74,7 @@ export const STARTER_WARDROBE: DemoItem[] = [
   { name: "Кожаные ботинки челси", category: "boots", slot: "footwear", colors: ["#241F1C"], warmth: 2, styleIds: ["classic", "academia", "goth", "minimal"], careState: "CLEAN", fitState: "FITS" },
   { name: "Беговые кроссовки", category: "sneakers", slot: "footwear", colors: ["#2659D9", "#DFF25C"], warmth: 1, styleIds: ["sporty", "streetwear"], careState: "CLEAN", fitState: "FITS" },
   { name: "Треккинговые кроссовки", category: "sneakers", slot: "footwear", colors: ["#516243", "#E46B32"], warmth: 2, styleIds: ["gorpcore", "techwear", "sporty"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Тёмные балетки Mary Jane", category: "shoes", slot: "footwear", colors: ["#242026"], warmth: 1, styleIds: ["stockholm", "coquette", "preppy", "classic", "school-uniform"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тёмные балетки Mary Jane", category: "shoes", slot: "footwear", colors: ["#242026"], warmth: 1, styleIds: ["coquette", "preppy", "classic", "school-uniform"], careState: "CLEAN", fitState: "FITS" },
   { name: "Серебристые акцентные кроссовки", category: "sneakers", slot: "footwear", colors: ["#C7CCD4"], warmth: 1, styleIds: ["y2k", "acubi", "streetwear"], careState: "CLEAN", fitState: "FITS" },
 
   { name: "Минимальная серая beanie", category: "beanie", slot: "headwear", colors: ["#4C5058"], warmth: 1, styleIds: ["stockholm", "skater", "streetwear", "minimal"], careState: "CLEAN", fitState: "FITS" },

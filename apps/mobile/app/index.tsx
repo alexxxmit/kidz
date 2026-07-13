@@ -94,6 +94,8 @@ type ProfileState = {
 const PROFILE_KEY = "mira.profile.v2";
 const TOKEN_KEY = "mira.session.v1";
 const WARDROBE_KEY = "mira.wardrobe.v1";
+const WARDROBE_CATALOG_KEY = "mira.wardrobe.catalog.v1";
+const WARDROBE_CATALOG_VERSION = "stockholm-reference-v2";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE" };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
@@ -169,7 +171,7 @@ export default function MiraApp() {
   }, [locale, profile.age, token]);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY)]).then(([saved, savedToken, savedWardrobe]) => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion]) => {
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
@@ -181,8 +183,17 @@ export default function MiraApp() {
       }
       if (savedToken) setToken(savedToken);
       if (savedWardrobe) {
-        try { setWardrobe(JSON.parse(savedWardrobe) as typeof wardrobePreview); } catch { /* Start with the safe demo closet. */ }
+        try {
+          const parsed = JSON.parse(savedWardrobe) as typeof wardrobePreview;
+          if (savedCatalogVersion === WARDROBE_CATALOG_VERSION) {
+            setWardrobe(parsed);
+          } else {
+            const personalItems = parsed.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
+            setWardrobe([...personalItems, ...wardrobePreview]);
+          }
+        } catch { /* Start with the safe demo closet. */ }
       }
+      void AsyncStorage.setItem(WARDROBE_CATALOG_KEY, WARDROBE_CATALOG_VERSION);
       setHydrated(true);
     });
   }, []);

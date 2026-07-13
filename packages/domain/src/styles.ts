@@ -19,7 +19,7 @@ const style = (
 });
 
 export const STYLE_CATALOG: StyleDefinition[] = [
-  style("stockholm", "Стокгольмский", "Stockholm", "Спокойная база, прямой или широкий низ, фактурный слой и чистая обувь.", "A quiet base, straight or wide bottoms, a textured layer and clean footwear.", ["#E9E7E2", "#25272D", "#9DA7B4"], ["minimal", "structured", "relaxed", "textured", "clean"], ["scandinavian", "скандинавский"]),
+  style("stockholm", "Стокгольмский", "Stockholm", "Полоска, мягкий трикотаж, свободный деним, мини-юбки и тёплые кожаные детали.", "Stripes, soft knitwear, relaxed denim, mini skirts and warm leather details.", ["#EEE9DE", "#24324C", "#8D8B86", "#593A2A"], ["minimal", "relaxed", "textured", "clean", "cozy"], ["scandinavian", "скандинавский"]),
   style("emo", "Эмо", "Emo", "Тёмный деним, музыкальная графика, полосатые слои и выразительные детали.", "Dark denim, music graphics, striped layers and expressive detail.", ["#111217", "#7D1D35", "#D8D9DF"], ["dark", "layered", "music", "graphic", "expressive"]),
   style("streetwear", "Стритвир", "Streetwear", "Свободный крой, графика и городская практичность.", "Relaxed cuts, graphics and urban practicality.", ["#20242D", "#E85D3F", "#ECE7DD"], ["oversized", "graphic", "urban"]),
   style("skater", "Скейтерский", "Skater", "Объёмные вещи, удобство и немного уличного беспорядка.", "Roomy pieces, comfort and a little street chaos.", ["#4C5B43", "#C9B78C", "#30343B"], ["relaxed", "durable", "street"]),

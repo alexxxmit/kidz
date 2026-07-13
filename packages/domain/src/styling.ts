@@ -275,16 +275,16 @@ const styleConfigs: Record<string, Partial<StyleStylingConfig>> = {
         en: "a neat short cut, soft volume and a clean line around the face",
       },
       MEDIUM: {
-        ru: "гладкий пробор, мягкие волны или сдержанный боб",
-        en: "a sleek part, soft waves or a restrained bob",
+        ru: "мягкий боб, объёмная укладка или прямые волосы с аккуратным ободком",
+        en: "a soft bob, bouncy styling or straight hair with a neat headband",
       },
       LONG: {
-        ru: "низкий хвост, гладкий пучок или прямой пробор без лишнего объёма",
-        en: "a low ponytail, sleek bun or straight part without extra volume",
+        ru: "объёмный blowout, прямые волосы с ободком или расслабленный низкий пучок",
+        en: "a bouncy blowout, straight hair with a headband or a relaxed low bun",
       },
       VERY_LONG: {
-        ru: "низкий хвост, гладкая коса или пучок с чистым контуром",
-        en: "a low ponytail, sleek braid or clean outlined bun",
+        ru: "мягкие длинные волны, низкий хвост или небрежный пучок с прядями у лица",
+        en: "soft long waves, a low ponytail or a loose bun with face-framing pieces",
       },
       MASCULINE: {
         SHORT: {
@@ -298,16 +298,16 @@ const styleConfigs: Record<string, Partial<StyleStylingConfig>> = {
       },
     },
     jewelry: {
-      ru: "тонкое серебро, маленькие серьги или часы без крупного логотипа",
-      en: "slim silver, small earrings or a watch without a large logo",
+      ru: "тонкий золотой кулон, небольшие кольца или миниатюрные часы",
+      en: "a delicate gold pendant, small hoops or a petite watch",
     },
     bag: {
-      ru: "структурированная сумка, tote или спокойный рюкзак",
-      en: "a structured bag, tote or quiet backpack",
+      ru: "мягкая сумка на плечо из коричневой, чёрной или бордовой кожи/замши",
+      en: "a soft shoulder bag in brown, black or burgundy leather or suede",
     },
     headwear: {
-      ru: "минимальная beanie или кепка без яркого принта",
-      en: "a minimal beanie or cap without a loud print",
+      ru: "трикотажный шарф, тёмный ободок или гетры как мягкий сезонный акцент",
+      en: "a knitted scarf, dark headband or leg warmers as a soft seasonal accent",
     },
   },
   emo: {

@@ -64,13 +64,17 @@ const styleSignatureScore = (items: CandidateItem[], styleId: string) => {
   if (!items.length) return 0;
   const exact = items.filter((item) => item.styleIds.includes(styleId)).length / items.length;
   if (styleId === "stockholm") {
-    const quiet = items.filter((item) => {
-      const luminance = parseLuminance(item.colors[0] ?? "#808080");
-      return luminance <= 0.42 || luminance >= 0.68;
-    }).length / items.length;
-    const silhouette = items.filter((item) => ["shirt", "sweater", "coat", "jacket", "trousers", "jeans", "sneakers", "shoes", "boots", "tote", "watch", "necklace"].includes(item.category)).length / items.length;
+    const palette = items.filter((item) => item.colors.some((color) => {
+      const luminance = parseLuminance(color);
+      return luminance <= 0.36 || luminance >= 0.64;
+    })).length / items.length;
+    const silhouette = items.filter((item) => ["tshirt", "shirt", "sweater", "coat", "jacket", "trousers", "jeans", "skirt", "shoes", "boots", "bag", "headband", "scarf", "necklace", "earrings"].includes(item.category)).length / items.length;
+    const currentCodes = items.filter((item) => /полос|stripe|кардиган|cardigan|v-neck|wide|широк|свобод|мини|mini|угги|suede|замш|балет|shoulder|плечо|ободок|headband|гетр|leg warmer|золот|gold/i.test(item.name)).length / items.length;
+    const knitLayer = items.some((item) => item.slot === "mid_layer" && item.category === "sweater");
+    const currentBottom = items.some((item) => item.slot === "bottom" && /wide|широк|свобод|мини|mini/i.test(item.name));
+    const warmDetail = items.some((item) => /корич|brown|шоколад|chocolate|бордов|burgundy|золот|gold|замш|suede/i.test(item.name));
     const noisy = items.filter((item) => /график|принт|graphic|logo/i.test(item.name)).length / items.length;
-    return clamp(exact * 0.5 + quiet * 0.23 + silhouette * 0.32 - noisy * 0.35);
+    return clamp(exact * 0.34 + palette * 0.1 + silhouette * 0.14 + currentCodes * 0.2 + (knitLayer ? 0.12 : 0) + (currentBottom ? 0.07 : 0) + (warmDetail ? 0.07 : 0) - noisy * 0.35);
   }
   if (styleId === "emo") {
     const dark = items.filter(itemIsDark).length / items.length;
@@ -289,7 +293,14 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
     const overlapsTooMuch = selected.some((current) => {
       const a = new Set(current.items.map((item) => item.name));
       const common = candidate.items.filter((item) => a.has(item.name)).length;
-      return common / Math.max(candidate.items.length, 1) > 0.75;
+      const coreSlots = new Set<GarmentSlot>(["top", "bottom", "one_piece", "footwear"]);
+      const core = candidate.items.filter((item) => coreSlots.has(item.slot));
+      const sharedCore = core.filter((item) => a.has(item.name)).length;
+      const lead = candidate.items.find((item) => item.slot === "top" || item.slot === "one_piece");
+      const repeatsLead = Boolean(lead && a.has(lead.name));
+      const bottom = candidate.items.find((item) => item.slot === "bottom");
+      const repeatsBottom = Boolean(bottom && a.has(bottom.name));
+      return repeatsLead || repeatsBottom || sharedCore / Math.max(core.length, 1) >= 0.66 || common / Math.max(candidate.items.length, 1) >= 0.72;
     });
     if (!overlapsTooMuch || selected.length === 0) selected.push(candidate);
     if (selected.length === 3) break;
