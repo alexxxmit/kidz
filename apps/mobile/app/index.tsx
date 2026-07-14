@@ -78,6 +78,7 @@ import {
 import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS } from "../src/appearance";
 import { STARTER_WARDROBE } from "../src/demo";
 import { BeautyReference, GarmentIllustration, OccasionIllustration, SchoolDressCodeIllustration } from "../src/illustrations";
+import { discardExpiredWebPhotos, isEphemeralWebImage, pickerImageDataUrl } from "../src/media";
 import { CHALLENGES, demoOutfits, PLUS_FEATURES, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
 
@@ -157,6 +158,30 @@ const prepareTryOnImage = async (uri: string, kind: "person" | "garment") => {
   if (!result.base64) throw new Error("IMAGE_PREPARATION_FAILED");
   return `data:image/${kind === "person" ? "jpeg" : "webp"};base64,${result.base64}`;
 };
+const preparePersistentWebSource = async (uri: string, fallback?: string) => {
+  try {
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 1000 } }],
+      { base64: true, compress: 0.68, format: ImageManipulator.SaveFormat.JPEG },
+    );
+    if (result.base64) return `data:image/jpeg;base64,${result.base64}`;
+  } catch {
+    // The picker-provided data URL is still durable when browser image conversion is unavailable.
+  }
+  if (fallback) return fallback;
+  try {
+    const blob = await (await fetch(uri)).blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("IMAGE_PREPARATION_FAILED"));
+      reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("IMAGE_PREPARATION_FAILED"));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    throw new Error("IMAGE_PREPARATION_FAILED");
+  }
+};
 
 export default function MiraApp() {
   const { width } = useWindowDimensions();
@@ -198,9 +223,11 @@ export default function MiraApp() {
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion]) => {
+      let savedLocale: Locale = defaultProfile.locale;
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
+          savedLocale = parsed.locale ?? defaultProfile.locale;
           setProfile({ ...defaultProfile, ...parsed, genderPresentation: parsed.genderPresentation ?? defaultProfile.genderPresentation, hairProfile: { ...DEFAULT_HAIR_PROFILE, ...parsed.hairProfile }, schoolDressCode: parsed.schoolDressCode ?? defaultProfile.schoolDressCode });
           if (!parsed.genderPresentation || !parsed.hairProfile || !parsed.schoolDressCode) setOverlay("onboarding");
         } catch { setOverlay("onboarding"); }
@@ -211,10 +238,14 @@ export default function MiraApp() {
       if (savedWardrobe) {
         try {
           const parsed = JSON.parse(savedWardrobe) as typeof wardrobePreview;
+          const restored = Platform.OS === "web" ? discardExpiredWebPhotos(parsed) : { items: parsed, discarded: 0 };
+          if (restored.discarded) {
+            setToast(tx(savedLocale, "Старое временное фото одежды истекло — добавь эту вещь ещё раз.", "An old temporary clothing photo expired — add that piece again."));
+          }
           if (savedCatalogVersion === WARDROBE_CATALOG_VERSION) {
-            setWardrobe(parsed);
+            setWardrobe(restored.items);
           } else {
-            const personalItems = parsed.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
+            const personalItems = restored.items.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
             setWardrobe([...personalItems, ...wardrobePreview]);
           }
         } catch { /* Start with the safe demo closet. */ }
@@ -341,6 +372,7 @@ export default function MiraApp() {
       const notConfigured = detail.includes("FAL_NOT_CONFIGURED") || detail.includes("503");
       const limited = detail.includes("TRY_ON_MONTHLY_LIMIT") || detail.includes("429");
       const needsParent = detail.includes("PARENTAL_CONSENT_REQUIRED") || detail.includes("403");
+      const expiredWardrobePhoto = detail.includes("ERR_FILE_NOT_FOUND") || detail.includes("NO_USABLE_GARMENTS") || detail.includes("IMAGE_PREPARATION_FAILED") || photographedItems.some((item) => isEphemeralWebImage(item.cutoutUri ?? item.imageUri));
       setTryOn({
         phase: "error",
         message: needsParent
@@ -349,7 +381,9 @@ export default function MiraApp() {
             ? tx(locale, "Примерка готова в приложении, но ключ fal.ai ещё не добавлен на сервер.", "Try-on is ready in the app, but the fal.ai key has not been added to the server yet.")
           : limited
             ? tx(locale, "Бесплатные примерки на этот месяц закончились.", "This month's free try-ons are used up.")
-            : tx(locale, "Не получилось собрать фоторендер. Проверь фото и попробуй ещё раз.", "The photo render did not complete. Check the photo and try again."),
+            : expiredWardrobePhoto
+              ? tx(locale, "Фото одной из вещей больше недоступно. Добавь эту вещь в шкаф заново — новое фото сохранится постоянно.", "One clothing photo is no longer available. Add that piece to the closet again; the new photo will persist.")
+              : tx(locale, "Не получилось собрать фоторендер. Проверь фото и попробуй ещё раз.", "The photo render did not complete. Check the photo and try again."),
       });
     }
   };
@@ -453,7 +487,9 @@ export default function MiraApp() {
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
     const localId = `photo-${Date.now()}`;
-    const storedSource = await persistWardrobeImage(asset.uri, localId, "source").catch(() => asset.uri);
+    const pickerDataUrl = pickerImageDataUrl(asset);
+    const durableSource = Platform.OS === "web" ? await preparePersistentWebSource(asset.uri, pickerDataUrl) : asset.uri;
+    const storedSource = await persistWardrobeImage(durableSource, localId, "source").catch(() => durableSource);
     const draftItem = { name: tx(locale, "AI распознаёт вещь…", "AI is scanning this piece…"), category: "tshirt" as const, slot: "top" as const, colors: ["#808080"], warmth: 1, styleIds: profile.styles, careState: "CLEAN" as const, fitState: "FITS" as const, imageUri: storedSource, imageProcessingState: "PENDING_CUTOUT" as const, localId };
     setWardrobe((items) => [draftItem, ...items]);
     notify(tx(locale, "Фото добавлено · AI распознаёт вещь и вырезает фон", "Photo added · AI is identifying the piece and removing its background"));
@@ -467,12 +503,22 @@ export default function MiraApp() {
       } else {
         setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Новая вещь · проверь тип", "New piece · check type") } : item));
       }
-      void cutoutWardrobePhoto(asset.base64).then((cutoutUri) => persistWardrobeImage(cutoutUri, localId, "cutout")).then((cutoutUri) => {
-        setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" } : item));
-        notify(tx(locale, "Фон вырезан · вещь готова", "Background removed · piece is ready"));
-      }).catch(() => {
-        setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageProcessingState: "CUTOUT_FAILED" } : item));
-      });
+      void cutoutWardrobePhoto(asset.base64)
+        .then((cutoutUri) => Platform.OS === "web" ? prepareTryOnImage(cutoutUri, "garment").catch(() => cutoutUri) : cutoutUri)
+        .then((cutoutUri) => persistWardrobeImage(cutoutUri, localId, "cutout"))
+        .then((cutoutUri) => {
+          setWardrobe((items) => items.map((item) => {
+            if (item.localId !== localId) return item;
+            if (Platform.OS === "web") {
+              const { imageUri: _source, ...durableItem } = item;
+              return { ...durableItem, cutoutUri, imageProcessingState: "CUTOUT_READY" };
+            }
+            return { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" };
+          }));
+          notify(tx(locale, "Фон вырезан · вещь готова", "Background removed · piece is ready"));
+        }).catch(() => {
+          setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageProcessingState: "CUTOUT_FAILED" } : item));
+        });
     }
   };
 
