@@ -862,9 +862,11 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
   onFollow: (accountId: string) => Promise<"ACCEPTED" | "REQUESTED">;
   onAccept: (accountId: string) => Promise<void>;
 }) {
+  const [activeFeed, setActiveFeed] = useState<"for-you" | "friends" | "challenges">("for-you");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<SocialSearchAccount[]>([]);
   const [followed, setFollowed] = useState<Record<string, string>>({});
+  const [joinedChallenges, setJoinedChallenges] = useState<Record<string, boolean>>({});
   const editorial = useMemo(() => editorialPosts(locale), [locale]);
   useEffect(() => {
     if (search.trim().length < 3) { setResults([]); return; }
@@ -878,18 +880,29 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
     <Text style={styles.lead}>{tx(locale, "Без открытой соцсети: только безопасные подборки от AI и редакции.", "No open social feed: only safe AI and editorial selections.")}</Text>
     <View style={styles.feedList}>{editorial.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />)}</View>
   </View>;
-  const visiblePosts = [...posts, ...editorial];
+  const visiblePosts = activeFeed === "friends" ? posts.filter((post) => !post.mine) : [...posts, ...editorial];
+  const feedTabs = [
+    { id: "for-you" as const, label: tx(locale, "Для тебя", "For you") },
+    { id: "friends" as const, label: tx(locale, "Друзья", "Friends") },
+    { id: "challenges" as const, label: tx(locale, "Челленджи", "Challenges") },
+  ];
   return (
     <View>
       <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{age < 13 ? tx(locale, "ТОЛЬКО ТВОЙ КРУГ", "YOUR CIRCLE ONLY") : tx(locale, "ТВОЙ STYLE-CIRCLE", "YOUR STYLE CIRCLE")}</Text><Text style={styles.screenTitle}>{tx(locale, "Вдохновение", "Inspiration")}</Text></View><Pressable style={styles.roundSearch}><Search size={20} color={colors.graphite} /></Pressable></View>
-      <View style={styles.feedTabs}><Text style={styles.feedTabActive}>{tx(locale, "Для тебя", "For you")}</Text><Text style={styles.feedTab}>{tx(locale, "Друзья", "Friends")}</Text><Text style={styles.feedTab}>{tx(locale, "Челленджи", "Challenges")}</Text></View>
+      <View style={styles.feedTabs}>{feedTabs.map((item) => { const selected = activeFeed === item.id; return <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => { setActiveFeed(item.id); void Haptics.selectionAsync(); }} style={[styles.feedTabButton, selected && styles.feedTabButtonActive]}><Text style={selected ? styles.feedTabActive : styles.feedTab}>{item.label}</Text></Pressable>; })}</View>
       <View style={styles.searchBar}><Search size={17} color={colors.secondary} /><TextInput value={search} onChangeText={setSearch} placeholder={tx(locale, "Найти @handle или стиль", "Find @handle or a style")} placeholderTextColor="#A19BAA" style={styles.searchInput} /></View>
       {incomingRequests.length > 0 && <View style={styles.requestPanel}><Text style={styles.requestTitle}>{tx(locale, "ХОТЯТ В ТВОЙ КРУГ", "CIRCLE REQUESTS")}</Text>{incomingRequests.map((account) => <View key={account.id} style={styles.searchResult}><View style={[styles.avatar, { backgroundColor: avatarColors[account.handle.length % avatarColors.length] }]}><Text style={styles.avatarLetter}>{account.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{account.nickname}</Text><Text style={styles.postHandle}>@{account.handle}</Text></View><Pressable onPress={() => void onAccept(account.id)} style={styles.acceptButton}><Check size={13} color={colors.paper} /><Text style={styles.acceptButtonText}>{tx(locale, "Принять", "Accept")}</Text></Pressable></View>)}</View>}
       {results.length > 0 && <View style={styles.searchResults}>{results.map((account) => <View key={account.id} style={styles.searchResult}><View style={[styles.avatar, { backgroundColor: avatarColors[account.handle.length % avatarColors.length] }]}><Text style={styles.avatarLetter}>{account.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.postName}>{account.nickname}</Text><Text style={styles.postHandle}>@{account.handle} · {account.styleMix.map((item) => item.styleId).join(" + ")}</Text></View><Pressable disabled={Boolean(followed[account.id])} onPress={() => { void onFollow(account.id).then((status) => setFollowed((value) => ({ ...value, [account.id]: status }))); }} style={styles.followButton}><Text style={styles.followButtonText}>{followed[account.id] ? tx(locale, "Отправлено", "Requested") : tx(locale, "В круг", "Follow")}</Text></Pressable></View>)}</View>}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendRail}>
+      {activeFeed === "for-you" && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendRail}>
         {TREND_STYLES.map((trend) => <View key={trend.id} style={styles.trendCard}><View style={styles.trendPalette}>{trend.colors.map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.trendName}>{trend.title}</Text><Text style={styles.trendChange}>{trend.change}</Text></View>)}
-      </ScrollView>
-      <View style={styles.feedList}>{visiblePosts.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />)}</View>
+      </ScrollView>}
+      {activeFeed !== "challenges" && (visiblePosts.length
+        ? <View style={[styles.feedList, activeFeed === "friends" && { marginTop: 15 }]}>{visiblePosts.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />)}</View>
+        : <View style={styles.circleEmpty}><View style={styles.circleEmptyIcon}><UserRound size={24} color={colors.ultraviolet} /></View><Text style={styles.circleEmptyTitle}>{tx(locale, "Здесь появятся образы друзей", "Friends' looks will appear here")}</Text><Text style={styles.circleEmptyBody}>{tx(locale, "Найди человека по @ID выше и добавь его в свой круг.", "Find someone by @ID above and add them to your circle.")}</Text></View>)}
+      {activeFeed === "challenges" && <View style={styles.challengeFeed}>
+        <Text style={styles.challengeFeedLead}>{tx(locale, "Выбирай задания, собирай новые сочетания и открывай вещи, которые давно не носила.", "Pick a challenge, build new combinations, and rediscover pieces you have not worn lately.")}</Text>
+        {CHALLENGES.map((challenge, index) => { const joined = Boolean(joinedChallenges[challenge.id]); const progress = Math.round((challenge.progress / challenge.total) * 100); return <View key={challenge.id} style={styles.circleChallengeCard}><LinearGradient colors={index % 2 ? ["#231A31", "#6549D7"] : ["#F5D9A4", "#F0A9B8"]} style={StyleSheet.absoluteFill} /><View style={styles.circleChallengeTop}><View style={styles.circleChallengeIcon}><Star size={20} color={colors.graphite} /></View><Text style={[styles.circleChallengeReward, index % 2 === 1 && { color: colors.paper }]}>+{challenge.reward} ✦</Text></View><Text style={[styles.circleChallengeTitle, index % 2 === 1 && { color: colors.paper }]}>{challenge.title[locale]}</Text><View style={styles.circleChallengeProgress}><View style={[styles.circleChallengeProgressFill, { width: `${progress}%` }]} /></View><View style={styles.circleChallengeBottom}><Text style={[styles.circleChallengeMeta, index % 2 === 1 && { color: "#D9D1E7" }]}>{challenge.progress}/{challenge.total}</Text><Pressable onPress={() => setJoinedChallenges((current) => ({ ...current, [challenge.id]: !joined }))} style={[styles.circleChallengeButton, joined && styles.circleChallengeButtonActive]}><Text style={[styles.circleChallengeButtonText, joined && styles.circleChallengeButtonTextActive]}>{joined ? tx(locale, "Участвую", "Joined") : tx(locale, "Начать", "Start")}</Text></Pressable></View></View>; })}
+      </View>}
     </View>
   );
 }
@@ -1263,9 +1276,11 @@ const styles = StyleSheet.create({
   challengeMeta: { fontFamily: typography.bodyMedium, fontSize: 9, color: colors.secondary, marginTop: 5 },
   screenTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   roundSearch: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
-  feedTabs: { flexDirection: "row", gap: 20, borderBottomWidth: 1, borderBottomColor: colors.line, marginTop: 20, marginBottom: 13 },
-  feedTab: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.secondary, paddingBottom: 11 },
-  feedTabActive: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite, paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: colors.ultraviolet },
+  feedTabs: { minHeight: 43, flexDirection: "row", borderBottomWidth: 1, borderBottomColor: colors.line, marginTop: 20, marginBottom: 13 },
+  feedTabButton: { flex: 1, minHeight: 43, alignItems: "center", justifyContent: "center", borderBottomWidth: 2, borderBottomColor: "transparent" },
+  feedTabButtonActive: { borderBottomColor: colors.ultraviolet },
+  feedTab: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.secondary },
+  feedTabActive: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite },
   searchBar: { height: 45, backgroundColor: colors.paper, borderRadius: 15, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
   searchInput: { flex: 1, fontFamily: typography.body, fontSize: 11.5, color: colors.graphite, outlineStyle: "none" } as never,
   searchResults: { marginTop: 8, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
@@ -1283,6 +1298,25 @@ const styles = StyleSheet.create({
   trendChange: { position: "absolute", right: 8, bottom: 7, fontFamily: typography.bodySemibold, fontSize: 8, color: colors.success },
   feedList: { gap: 15 },
   emptyFeed: { alignItems: "center", gap: 8, borderRadius: 22, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 28, paddingVertical: 34 },
+  circleEmpty: { minHeight: 220, borderRadius: 24, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", padding: 27, marginTop: 15 },
+  circleEmptyIcon: { width: 52, height: 52, borderRadius: 19, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  circleEmptyTitle: { fontFamily: typography.displaySoft, fontSize: 14, color: colors.graphite, textAlign: "center", marginTop: 13 },
+  circleEmptyBody: { fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary, textAlign: "center", marginTop: 7 },
+  challengeFeed: { gap: 11, paddingTop: 14 },
+  challengeFeedLead: { fontFamily: typography.body, fontSize: 11, lineHeight: 17, color: colors.secondary, marginBottom: 2 },
+  circleChallengeCard: { minHeight: 190, borderRadius: 25, overflow: "hidden", padding: 17, justifyContent: "space-between" },
+  circleChallengeTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  circleChallengeIcon: { width: 43, height: 43, borderRadius: 15, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
+  circleChallengeReward: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  circleChallengeTitle: { maxWidth: 300, fontFamily: typography.displaySoft, fontSize: 16, lineHeight: 21, color: colors.graphite, marginTop: 16 },
+  circleChallengeProgress: { height: 6, borderRadius: 4, backgroundColor: "#FFFFFF66", overflow: "hidden", marginTop: 17 },
+  circleChallengeProgressFill: { height: 6, borderRadius: 4, backgroundColor: colors.paper },
+  circleChallengeBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 11 },
+  circleChallengeMeta: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.graphite },
+  circleChallengeButton: { minWidth: 84, minHeight: 35, borderRadius: 13, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  circleChallengeButtonActive: { backgroundColor: colors.graphite },
+  circleChallengeButtonText: { fontFamily: typography.bodySemibold, fontSize: 9, color: colors.graphite },
+  circleChallengeButtonTextActive: { color: colors.paper },
   postCard: { backgroundColor: colors.paper, borderRadius: 24, padding: 13, borderWidth: 1, borderColor: colors.line },
   postHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 11 },
   postNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
