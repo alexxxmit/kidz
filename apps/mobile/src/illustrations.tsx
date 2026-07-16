@@ -4,6 +4,7 @@ import Svg, { Circle, G, Line, Path, Rect } from "react-native-svg";
 
 type Garment = Omit<WardrobeItemInput, "profileId">;
 type GridCell = { column: number; row: number };
+export type GarmentPhotoReference = { source: number; cell: GridCell; columns: number; rows: number };
 
 const ink = "#24212A";
 const wardrobeGrid = require("../assets/editorial/wardrobe-products-grid-v1.png");
@@ -104,12 +105,20 @@ const stockholmAccessoryCell = (item: Garment): GridCell => {
 const isAccessory = (item: Garment) => ["jewelry", "bag", "headwear", "accessory"].includes(item.slot);
 const isStockholm = (item: Garment) => item.styleIds.includes("stockholm");
 
-export function GarmentIllustration({ item, height = 92 }: { item: Garment; height?: number }) {
+export function garmentPhotoReference(item: Garment): GarmentPhotoReference {
   const stockholm = isStockholm(item);
   const accessory = isAccessory(item);
-  const source = stockholm ? (accessory ? stockholmAccessoryGrid : stockholmGrid) : (accessory ? accessoryGrid : wardrobeGrid);
-  const cell = stockholm ? (accessory ? stockholmAccessoryCell(item) : stockholmProductCell(item)) : (accessory ? accessoryCell(item) : productCell(item));
-  return <PhotoGridCrop source={source} cell={cell} columns={4} rows={5} height={height} rounded={18} inset={5} />;
+  return {
+    source: stockholm ? (accessory ? stockholmAccessoryGrid : stockholmGrid) : (accessory ? accessoryGrid : wardrobeGrid),
+    cell: stockholm ? (accessory ? stockholmAccessoryCell(item) : stockholmProductCell(item)) : (accessory ? accessoryCell(item) : productCell(item)),
+    columns: 4,
+    rows: 5,
+  };
+}
+
+export function GarmentIllustration({ item, height = 92 }: { item: Garment; height?: number }) {
+  const reference = garmentPhotoReference(item);
+  return <PhotoGridCrop {...reference} height={height} rounded={18} inset={5} />;
 }
 
 export function OccasionIllustration({ occasion, active = false }: { occasion: "school" | "walk" | "party" | "sport"; active?: boolean }) {

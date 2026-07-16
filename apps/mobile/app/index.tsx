@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode, type TryOnGarmentReference, type TryOnJob } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
+import { Asset } from "expo-asset";
 import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
@@ -82,7 +83,7 @@ import {
 } from "../src/api";
 import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS } from "../src/appearance";
 import { STARTER_WARDROBE } from "../src/demo";
-import { BeautyReference, GarmentIllustration, OccasionIllustration, SchoolDressCodeIllustration } from "../src/illustrations";
+import { BeautyReference, GarmentIllustration, OccasionIllustration, SchoolDressCodeIllustration, garmentPhotoReference } from "../src/illustrations";
 import { lookSignature, rankOutfitsWithLearning, type LookFeedback } from "../src/learning";
 import { discardExpiredWebPhotos, isEphemeralWebImage, pickerImageDataUrl } from "../src/media";
 import { CHALLENGES, demoOutfits, editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
@@ -170,6 +171,29 @@ const prepareTryOnImage = async (uri: string, kind: "person" | "garment") => {
   );
   if (!result.base64) throw new Error("IMAGE_PREPARATION_FAILED");
   return `data:image/${kind === "person" ? "jpeg" : "webp"};base64,${result.base64}`;
+};
+const imageDimensions = async (uri: string) => new Promise<{ width: number; height: number }>((resolve, reject) => {
+  Image.getSize(uri, (width, height) => resolve({ width, height }), reject);
+});
+const prepareCatalogGarmentReference = async (item: OutfitOption["items"][number]) => {
+  const reference = garmentPhotoReference(item);
+  const asset = Asset.fromModule(reference.source);
+  if (!asset.downloaded) await asset.downloadAsync();
+  const assetUri = asset.localUri ?? asset.uri;
+  if (!assetUri) throw new Error("CATALOG_REFERENCE_MISSING");
+  const size = asset.width && asset.height ? { width: asset.width, height: asset.height } : await imageDimensions(assetUri);
+  const cellWidth = Math.floor(size.width / reference.columns);
+  const cellHeight = Math.floor(size.height / reference.rows);
+  const result = await ImageManipulator.manipulateAsync(
+    assetUri,
+    [
+      { crop: { originX: reference.cell.column * cellWidth, originY: reference.cell.row * cellHeight, width: cellWidth, height: cellHeight } },
+      { resize: { width: 640 } },
+    ],
+    { base64: true, compress: 0.82, format: ImageManipulator.SaveFormat.WEBP },
+  );
+  if (!result.base64) throw new Error("CATALOG_REFERENCE_PREPARATION_FAILED");
+  return `data:image/webp;base64,${result.base64}`;
 };
 const preparePersistentWebSource = async (uri: string, fallback?: string) => {
   try {
@@ -326,11 +350,7 @@ export default function MiraApp() {
       setTryOn({ phase: "error", message: tx(locale, "Для примерки нужно подключение к аккаунту и интернету.", "Try-on needs an account connection and internet access.") });
       return;
     }
-    const photographedItems = currentLook.items.filter((item) => Boolean(item.cutoutUri || item.imageUri));
-    if (!photographedItems.length) {
-      setTryOn({ phase: "error", message: tx(locale, "В этом луке пока только демо-вещи. Сфотографируй хотя бы одну свою вещь — AI будет повторять именно её.", "This look only contains demo pieces. Photograph at least one real item so AI can reproduce it.") });
-      return;
-    }
+    const referenceItems = currentLook.items.slice(0, 6);
     const runId = tryOnRunRef.current + 1;
     tryOnRunRef.current = runId;
     try {
@@ -343,10 +363,9 @@ export default function MiraApp() {
       const personImageDataUrl = await prepareTryOnImage(picked.assets[0].uri, "person");
       const garments: TryOnGarmentReference[] = [];
       let payloadSize = personImageDataUrl.length;
-      for (const item of photographedItems.slice(0, 6)) {
+      for (const item of referenceItems) {
         const uri = item.cutoutUri ?? item.imageUri;
-        if (!uri) continue;
-        const imageDataUrl = await prepareTryOnImage(uri, "garment");
+        const imageDataUrl = uri ? await prepareTryOnImage(uri, "garment") : await prepareCatalogGarmentReference(item);
         if (payloadSize + imageDataUrl.length > 12_500_000) continue;
         garments.push({ name: item.name, slot: item.slot, imageDataUrl });
         payloadSize += imageDataUrl.length;
@@ -396,7 +415,8 @@ export default function MiraApp() {
       const notConfigured = detail.includes("FAL_NOT_CONFIGURED") || detail.includes("503");
       const limited = detail.includes("TRY_ON_MONTHLY_LIMIT") || detail.includes("429");
       const needsParent = detail.includes("PARENTAL_CONSENT_REQUIRED") || detail.includes("403");
-      const expiredWardrobePhoto = detail.includes("ERR_FILE_NOT_FOUND") || detail.includes("NO_USABLE_GARMENTS") || detail.includes("IMAGE_PREPARATION_FAILED") || photographedItems.some((item) => isEphemeralWebImage(item.cutoutUri ?? item.imageUri));
+      const expiredWardrobePhoto = detail.includes("ERR_FILE_NOT_FOUND") || referenceItems.some((item) => isEphemeralWebImage(item.cutoutUri ?? item.imageUri));
+      const referenceFailed = detail.includes("NO_USABLE_GARMENTS") || detail.includes("IMAGE_PREPARATION_FAILED") || detail.includes("CATALOG_REFERENCE");
       setTryOn({
         phase: "error",
         message: needsParent
@@ -407,6 +427,8 @@ export default function MiraApp() {
             ? tx(locale, "Бесплатные примерки на этот месяц закончились.", "This month's free try-ons are used up.")
             : expiredWardrobePhoto
               ? tx(locale, "Фото одной из вещей больше недоступно. Добавь эту вещь в шкаф заново — новое фото сохранится постоянно.", "One clothing photo is no longer available. Add that piece to the closet again; the new photo will persist.")
+              : referenceFailed
+                ? tx(locale, "Не удалось подготовить референсы этого образа. Выбери другой лук и попробуй ещё раз.", "Could not prepare this look's references. Choose another look and try again.")
               : tx(locale, "Не получилось собрать фоторендер. Проверь фото и попробуй ещё раз.", "The photo render did not complete. Check the photo and try again."),
       });
     }
@@ -939,6 +961,7 @@ function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outf
 
 function TryOnScreen({ locale, look, state, allowHairColorPreview, setAllowHairColorPreview, onStart, onReset, onClose }: { locale: Locale; look: OutfitOption; state: TryOnViewState; allowHairColorPreview: boolean; setAllowHairColorPreview: (value: boolean) => void; onStart: (source: "camera" | "library") => void; onReset: () => void; onClose: () => void }) {
   const busy = ["preparing", "queued", "processing"].includes(state.phase);
+  const usesPersonalPieces = look.items.some((item) => Boolean(item.cutoutUri || item.imageUri));
   const statusTitle = state.phase === "preparing"
     ? tx(locale, "Готовим фотографии…", "Preparing photos…")
     : state.phase === "queued"
@@ -953,6 +976,7 @@ function TryOnScreen({ locale, look, state, allowHairColorPreview, setAllowHairC
           <Text style={styles.tryOnHeroTitle}>{tx(locale, "Посмотри лук на себе", "See the look on you")}</Text>
           <Text style={styles.tryOnHeroBody}>{tx(locale, "AI перенесёт выбранные вещи, укладку и подходящий макияж на твою фотографию — без аватара.", "AI applies the selected pieces, hair styling, and suitable makeup to your photo — no avatar.")}</Text>
         </LinearGradient>
+        <View style={styles.tryOnReferenceCard}><View style={styles.tryOnReferenceIcon}>{usesPersonalPieces ? <Shirt size={18} color={colors.ultraviolet} /> : <Sparkles size={18} color={colors.ultraviolet} />}</View><View style={{ flex: 1 }}><Text style={styles.tryOnReferenceTitle}>{usesPersonalPieces ? tx(locale, "Твои вещи — точный режим", "Your pieces — precise mode") : tx(locale, "Можно примерить прямо сейчас", "Ready to try on now")}</Text><Text style={styles.tryOnReferenceBody}>{usesPersonalPieces ? tx(locale, "AI использует вырезанные фотографии из шкафа.", "AI uses the cutout photos from your closet.") : tx(locale, "Для демо-лука AI возьмёт визуальные референсы MIRA. Свои фотографии вещей дадут ещё более точный результат.", "For a demo look, AI uses MIRA visual references. Photos of your own pieces will make the result even more precise.")}</Text></View><Check size={17} color={colors.success} /></View>
         <View style={styles.photoGuideCard}><Text style={styles.photoGuideTitle}>{tx(locale, "Для лучшего результата", "For the best result")}</Text><Text style={styles.photoGuideLine}>1. {tx(locale, "Фото в полный рост, прямо перед камерой", "Use a front-facing full-body photo")}</Text><Text style={styles.photoGuideLine}>2. {tx(locale, "Хороший свет, руки и ноги видны", "Use good light with arms and legs visible")}</Text><Text style={styles.photoGuideLine}>3. {tx(locale, "Оставайся полностью одетой/одетым", "Stay fully clothed")}</Text></View>
         {look.hair.colorFit === "optional_shift" && <Pressable onPress={() => setAllowHairColorPreview(!allowHairColorPreview)} style={styles.hairPreviewToggle}><View style={[styles.toggleCheck, allowHairColorPreview && styles.toggleCheckActive]}>{allowHairColorPreview && <Check size={14} color={colors.paper} />}</View><View style={{ flex: 1 }}><Text style={styles.hairPreviewTitle}>{tx(locale, "Показать рекомендованный цвет волос", "Preview the recommended hair color")}</Text><Text style={styles.hairPreviewBody}>{tx(locale, "По умолчанию AI сохранит твой настоящий цвет", "AI keeps your real hair color by default")}</Text></View></Pressable>}
         <View style={styles.tryOnSourceActions}><Pressable onPress={() => onStart("camera")} style={styles.tryOnCameraButton}><Camera size={18} color={colors.paper} /><Text style={styles.tryOnCameraText}>{tx(locale, "Сделать фото", "Take a photo")}</Text></Pressable><Pressable onPress={() => onStart("library")} style={styles.tryOnLibraryButton}><ImagePlus size={18} color={colors.graphite} /><Text style={styles.tryOnLibraryText}>{tx(locale, "Выбрать фото", "Choose a photo")}</Text></Pressable></View>
@@ -1438,6 +1462,10 @@ const styles = StyleSheet.create({
   tryOnHeroIcon: { width: 58, height: 58, borderRadius: 21, backgroundColor: "#FFFFFF1C", alignItems: "center", justifyContent: "center" },
   tryOnHeroTitle: { fontFamily: typography.display, fontSize: 25, lineHeight: 31, color: colors.paper, textAlign: "center", marginTop: 15 },
   tryOnHeroBody: { fontFamily: typography.body, fontSize: 11.5, lineHeight: 18, color: "#E7E0ED", textAlign: "center", marginTop: 8 },
+  tryOnReferenceCard: { minHeight: 76, borderRadius: 20, backgroundColor: colors.violetMist, borderWidth: 1, borderColor: "#DDD5F5", flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginTop: 12 },
+  tryOnReferenceIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
+  tryOnReferenceTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  tryOnReferenceBody: { fontFamily: typography.body, fontSize: 8.8, lineHeight: 13.5, color: colors.secondary, marginTop: 3 },
   photoGuideCard: { borderRadius: 21, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 15, marginTop: 12, gap: 7 },
   photoGuideTitle: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite, marginBottom: 2 },
   photoGuideLine: { fontFamily: typography.body, fontSize: 9.8, lineHeight: 15, color: colors.secondary },
