@@ -88,6 +88,7 @@ const styleSignatureScore = (items: CandidateItem[], styleId: string) => {
 const targetWarmth = (temperatureC: number): number => {
   if (temperatureC <= 0) return 9;
   if (temperatureC <= 8) return 7;
+  if (temperatureC <= 12) return 6;
   if (temperatureC <= 15) return 5;
   if (temperatureC <= 22) return 3;
   return 1;
@@ -186,6 +187,11 @@ const combinations = (
     undefined,
     ...ranked(available.filter((item) => item.slot === "outerwear"), 4),
   ];
+  const feelsLike = request.weather.feelsLikeC ?? request.weather.temperatureC;
+  const needsOuter = outers.length > 1 && (feelsLike <= 5 || (request.weather.rainProbability >= 0.55 && feelsLike <= 22));
+  const needsLayer = (mids.length > 1 || outers.length > 1) && (feelsLike <= 12 || (request.weather.windKph >= 25 && feelsLike <= 18));
+  const needsMiddleLayer = mids.length > 1 && feelsLike <= 0;
+  const avoidWarmLayers = feelsLike >= 28;
   const optionalBySlot = (slot: GarmentSlot): Array<CandidateItem | undefined> => [
     undefined,
     ...ranked(available.filter((item) => item.slot === slot), 2),
@@ -213,6 +219,10 @@ const combinations = (
     for (const shoe of shoes.length ? shoes : [undefined]) {
       for (const mid of mids) {
         for (const outer of outers) {
+          if (needsOuter && !outer) continue;
+          if (needsLayer && !mid && !outer) continue;
+          if (needsMiddleLayer && !mid) continue;
+          if (avoidWarmLayers && ((mid?.warmth ?? 0) > 0 || (outer?.warmth ?? 0) > 0)) continue;
           for (const accessories of accessorySets) {
             result.push(
               [...body, shoe, mid, outer, ...accessories].filter(Boolean) as CandidateItem[],
@@ -222,7 +232,11 @@ const combinations = (
       }
     }
   }
-  return result.length ? result : available.map((item) => [item]);
+  return result.filter((items) => {
+    const hasLayer = items.some((item) => item.slot === "mid_layer" || item.slot === "outerwear");
+    const hasBase = items.some((item) => item.slot === "top" || item.slot === "one_piece");
+    return !hasLayer || hasBase;
+  });
 };
 
 const optionSignature = (items: CandidateItem[]) =>
@@ -265,6 +279,9 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
       items.some((item) => item.slot === "jewelry" || item.slot === "bag" || item.slot === "accessory")
         ? "ACCESSORY_BALANCE"
         : "ACCESSORY_IDEA",
+      items.some((item) => item.slot === "mid_layer" || item.slot === "outerwear")
+        ? "LAYER_OVER_BASE"
+        : "NO_EXTRA_LAYER",
       ...weather.reasons,
       completeness.missing.length ? "PARTIAL_WARDROBE" : "COMPLETE_LOOK",
     ];

@@ -136,4 +136,61 @@ describe("generateOutfits", () => {
     expect(emo[0]?.items.every((item) => item.styleIds.includes("emo"))).toBe(true);
     expect(stockholm[0]?.items.map((item) => item.name)).not.toEqual(emo[0]?.items.map((item) => item.name));
   });
+
+  it("never treats a cardigan or coat as the only top", () => {
+    const options = generateOutfits({
+      profile: {
+        displayName: "Mira", locale: "ru", ageYears: 15, autonomyMode: "USER_DECIDES", genderPresentation: "FEMININE",
+        hairProfile: { length: "LONG", color: "BROWN", openToColorAdvice: true }, schoolDressCode: "FREE_STYLE", styleMix: [{ styleId: "stockholm", weight: 1 }],
+      },
+      weather: { temperatureC: 5, feelsLikeC: 2, rainProbability: 0, windKph: 8, occasion: "everyday" },
+      wardrobe: [
+        { name: "Кардиган", category: "sweater", slot: "mid_layer", colors: ["#ddd"], warmth: 3, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Пальто", category: "coat", slot: "outerwear", colors: ["#777"], warmth: 4, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Брюки", category: "trousers", slot: "bottom", colors: ["#555"], warmth: 2, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+      ],
+    });
+
+    expect(options).toEqual([]);
+  });
+
+  it("adds cold-weather outerwear over a real base when it is available", () => {
+    const options = generateOutfits({
+      profile: {
+        displayName: "Mira", locale: "ru", ageYears: 15, autonomyMode: "USER_DECIDES", genderPresentation: "FEMININE",
+        hairProfile: { length: "LONG", color: "BROWN", openToColorAdvice: true }, schoolDressCode: "FREE_STYLE", styleMix: [{ styleId: "stockholm", weight: 1 }],
+      },
+      weather: { temperatureC: 7, feelsLikeC: 4, rainProbability: 0.6, windKph: 30, occasion: "everyday" },
+      wardrobe: [
+        { name: "Лонгслив", category: "tshirt", slot: "top", colors: ["#eee"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Джинсы", category: "jeans", slot: "bottom", colors: ["#445"], warmth: 2, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Ботинки", category: "boots", slot: "footwear", colors: ["#332"], warmth: 2, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Пальто", category: "coat", slot: "outerwear", colors: ["#777"], warmth: 4, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+      ],
+    });
+
+    expect(options[0]?.items.some((item) => item.slot === "top")).toBe(true);
+    expect(options[0]?.items.some((item) => item.slot === "outerwear")).toBe(true);
+    expect(options[0]?.reasonCodes).toContain("LAYER_OVER_BASE");
+  });
+
+  it("does not add an unnecessary warm layer in hot weather", () => {
+    const options = generateOutfits({
+      profile: {
+        displayName: "Mira", locale: "ru", ageYears: 15, autonomyMode: "USER_DECIDES", genderPresentation: "FEMININE",
+        hairProfile: { length: "LONG", color: "BROWN", openToColorAdvice: true }, schoolDressCode: "FREE_STYLE", styleMix: [{ styleId: "stockholm", weight: 1 }],
+      },
+      weather: { temperatureC: 34, feelsLikeC: 38, rainProbability: 0, windKph: 8, occasion: "everyday" },
+      wardrobe: [
+        { name: "Лёгкий топ", category: "tshirt", slot: "top", colors: ["#eee"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Юбка", category: "skirt", slot: "bottom", colors: ["#eee"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Балетки", category: "shoes", slot: "footwear", colors: ["#332"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Тёплый кардиган", category: "sweater", slot: "mid_layer", colors: ["#ddd"], warmth: 4, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Пальто", category: "coat", slot: "outerwear", colors: ["#777"], warmth: 5, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+      ],
+    });
+
+    expect(options[0]?.items.some((item) => item.slot === "mid_layer" || item.slot === "outerwear")).toBe(false);
+    expect(options[0]?.reasonCodes).toContain("NO_EXTRA_LAYER");
+  });
 });

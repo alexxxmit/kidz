@@ -17,12 +17,19 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleUserRound,
+  Cloud,
+  CloudFog,
+  CloudLightning,
+  CloudRain,
+  CloudSnow,
   Compass,
   Crown,
+  Droplets,
   Heart,
   Home,
   ImagePlus,
   LockKeyhole,
+  MapPin,
   MessageCircle,
   Minus,
   MoreHorizontal,
@@ -34,11 +41,13 @@ import {
   Shuffle,
   Sparkles,
   Star,
+  Sun,
   ThumbsDown,
   ThumbsUp,
   UserRound,
   WandSparkles,
   WashingMachine,
+  Wind,
   X,
 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -87,9 +96,10 @@ import { lookSignature, rankOutfitsWithLearning, type LookFeedback } from "../sr
 import { discardExpiredWebPhotos, isEphemeralWebImage, pickerImageDataUrl } from "../src/media";
 import { CHALLENGES, editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
+import { loadCurrentWeather, parseWeatherLocation, parseWeatherSnapshot, searchWeatherLocations, toWeatherContext, weatherAdvice, weatherKind, weatherLabel, type WeatherLocation, type WeatherSnapshot } from "../src/weather";
 
 type Tab = "today" | "circle" | "create" | "closet" | "me";
-type Overlay = "none" | "onboarding" | "chat" | "paywall" | "tryon";
+type Overlay = "none" | "onboarding" | "chat" | "paywall" | "tryon" | "weather";
 type TryOnViewState = {
   phase: "intro" | "preparing" | "queued" | "processing" | "ready" | "error";
   resultImageUrl?: string;
@@ -118,6 +128,8 @@ const TOKEN_KEY = "mira.session.v1";
 const WARDROBE_KEY = "mira.wardrobe.v1";
 const WARDROBE_CATALOG_KEY = "mira.wardrobe.catalog.v1";
 const DEMO_WARDROBE_KEY = "mira.demo-wardrobe.v1";
+const WEATHER_LOCATION_KEY = "mira.weather-location.v1";
+const WEATHER_SNAPSHOT_KEY = "mira.weather-snapshot.v1";
 const LOOK_FEEDBACK_KEY = "mira.look-feedback.v1";
 const WARDROBE_CATALOG_VERSION = "stockholm-reference-v2";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", guidanceComplete: false };
@@ -233,6 +245,10 @@ export default function MiraApp() {
   const [token, setToken] = useState<string>();
   const [wardrobe, setWardrobe] = useState<WardrobeClientItem[]>([]);
   const [demoWardrobeEnabled, setDemoWardrobeEnabled] = useState(false);
+  const [weatherLocation, setWeatherLocation] = useState<WeatherLocation>();
+  const [weather, setWeather] = useState<WeatherSnapshot>();
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState(false);
   const [lookFeedback, setLookFeedback] = useState<LookFeedback[]>([]);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FollowRequest[]>([]);
@@ -254,6 +270,19 @@ export default function MiraApp() {
   const selectedNames = catalogStyles.filter((item) => profile.styles.includes(item.id)).map((item) => item.name);
   const currentLook = generated[activeLook] ?? generated[0];
   const currentFeedback = currentLook ? lookFeedback.find((item) => item.signature === lookSignature(currentLook)) : undefined;
+  const refreshWeather = useCallback(async (location: WeatherLocation) => {
+    setWeatherLoading(true);
+    setWeatherError(false);
+    try {
+      const snapshot = await loadCurrentWeather(location);
+      setWeather(snapshot);
+      await AsyncStorage.setItem(WEATHER_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    } catch {
+      setWeatherError(true);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
   const searchAccounts = useCallback(async (query: string) => token ? (await searchSocialAccounts(token, query)).accounts : [], [token]);
   const followAccount = useCallback(async (accountId: string) => token ? (await followSocialAccount(token, accountId)).status : "REQUESTED" as const, [token]);
   const acceptConnection = useCallback(async (accountId: string) => {
@@ -265,10 +294,13 @@ export default function MiraApp() {
   }, [locale, profile.age, token]);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback]) => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY), AsyncStorage.getItem(WEATHER_LOCATION_KEY), AsyncStorage.getItem(WEATHER_SNAPSHOT_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback, savedWeatherLocation, savedWeatherSnapshot]) => {
       let savedLocale: Locale = defaultProfile.locale;
       const restoreDemoWardrobe = savedDemoWardrobe === "true";
       setDemoWardrobeEnabled(restoreDemoWardrobe);
+      const restoredWeatherLocation = parseWeatherLocation(savedWeatherLocation);
+      setWeatherLocation(restoredWeatherLocation);
+      setWeather(restoredWeatherLocation ? parseWeatherSnapshot(savedWeatherSnapshot) : undefined);
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
@@ -317,6 +349,13 @@ export default function MiraApp() {
   }, [demoWardrobeEnabled, hydrated]);
 
   useEffect(() => {
+    if (!hydrated || !weatherLocation) return;
+    void refreshWeather(weatherLocation);
+    const timer = setInterval(() => void refreshWeather(weatherLocation), 30 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [hydrated, refreshWeather, weatherLocation]);
+
+  useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(LOOK_FEEDBACK_KEY, JSON.stringify(lookFeedback.slice(-80)));
   }, [hydrated, lookFeedback]);
 
@@ -345,6 +384,15 @@ export default function MiraApp() {
   const notify = (message: string) => {
     setToast(message);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const selectWeatherLocation = async (location: WeatherLocation) => {
+    setWeatherLocation(location);
+    setWeather(undefined);
+    setWeatherError(false);
+    setOverlay("none");
+    await AsyncStorage.setItem(WEATHER_LOCATION_KEY, JSON.stringify(location));
+    notify(tx(locale, `${location.name}: обновляю погоду`, `Updating weather for ${location.name}`));
   };
 
   const openTryOn = () => {
@@ -512,7 +560,7 @@ export default function MiraApp() {
         styleMix: target.styles.map((styleId) => ({ styleId, weight: 1 / target.styles.length })),
       },
       wardrobe: recommendationWardrobe.map(({ localId: _id, ...item }) => item),
-      weather: { temperatureC: 17, feelsLikeC: 16, rainProbability: 0.2, windKph: 12, occasion: nextOccasion as "school" | "walk" | "sport" | "party" | "everyday" },
+      weather: toWeatherContext(weather, nextOccasion as "school" | "walk" | "sport" | "party" | "everyday"),
     });
     const favoriteNames = wardrobe.filter((item) => item.favorite).map((item) => item.name);
     setGenerated(rankOutfitsWithLearning(options, lookFeedback, favoriteNames));
@@ -522,7 +570,7 @@ export default function MiraApp() {
   useEffect(() => {
     if (!hydrated) return;
     generateFor(profile, occasion);
-  }, [hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.locale, profile.styles, wardrobe]);
+  }, [hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.locale, profile.styles, wardrobe, weather?.feelsLikeC, weather?.precipitationProbability, weather?.temperatureC, weather?.windKph]);
 
   const askMira = async (question = aiQuestion) => {
     const normalized = question.trim();
@@ -559,6 +607,16 @@ export default function MiraApp() {
     if (!wardrobe.length) {
       setTab("closet");
       notify(tx(locale, "Сначала добавь вещь или включи демо по желанию", "Add a piece first, or turn on the demo if you want"));
+      return;
+    }
+    if (!weatherLocation) {
+      setOverlay("weather");
+      notify(tx(locale, "Сначала выбери город — так образ будет по реальной погоде", "Choose your city first so the look uses real weather"));
+      return;
+    }
+    if (!weather) {
+      void refreshWeather(weatherLocation);
+      notify(tx(locale, "Обновляю погоду — образ появится сразу после", "Updating weather — your look will be ready right after"));
       return;
     }
     setOccasion("everyday");
@@ -725,12 +783,14 @@ export default function MiraApp() {
 
   const removeAccount = async () => {
     if (token) await deleteAccount(token).catch(() => undefined);
-    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), storage.deleteToken()]);
+    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(WEATHER_LOCATION_KEY), AsyncStorage.removeItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), storage.deleteToken()]);
     if (Platform.OS !== "web" && wardrobeDirectory) await FileSystem.deleteAsync(wardrobeDirectory, { idempotent: true }).catch(() => undefined);
     setToken(undefined);
     setProfile(defaultProfile);
     setWardrobe([]);
     setDemoWardrobeEnabled(false);
+    setWeatherLocation(undefined);
+    setWeather(undefined);
     setLookFeedback([]);
     setPosts([]);
     setOnboardingFirstRun(true);
@@ -775,6 +835,12 @@ export default function MiraApp() {
                 hasWardrobe={wardrobe.length > 0}
                 onAddPhoto={addPhoto}
                 onEnableDemo={enableDemoWardrobe}
+                weatherLocation={weatherLocation}
+                weather={weather}
+                weatherLoading={weatherLoading}
+                weatherError={weatherError}
+                onWeather={() => setOverlay("weather")}
+                onRefreshWeather={() => weatherLocation && void refreshWeather(weatherLocation)}
               />
             )}
             {tab === "circle" && (
@@ -830,6 +896,7 @@ export default function MiraApp() {
               {overlay === "chat" && <ChatScreen locale={locale} age={profile.age} token={token} onClose={() => setOverlay("none")} />}
               {overlay === "paywall" && <Paywall locale={locale} onClose={() => setOverlay("none")} />}
               {overlay === "tryon" && currentLook && <TryOnScreen locale={locale} look={currentLook} state={tryOn} allowHairColorPreview={allowHairColorPreview} setAllowHairColorPreview={setAllowHairColorPreview} onStart={startTryOn} onReset={() => setTryOn({ phase: "intro" })} onClose={closeTryOn} />}
+              {overlay === "weather" && <WeatherScreen locale={locale} current={weatherLocation} onSelect={selectWeatherLocation} onClose={() => setOverlay("none")} />}
             </View>
           )}
         </View>
@@ -851,7 +918,17 @@ function AppHeader({ locale, profile, socialEnabled, onChat, onPlus }: { locale:
   );
 }
 
-function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onEnableDemo }: {
+function WeatherGlyph({ snapshot, size = 19, color = colors.graphite }: { snapshot: WeatherSnapshot; size?: number; color?: string }) {
+  const kind = weatherKind(snapshot.weatherCode);
+  if (kind === "storm") return <CloudLightning size={size} color={color} />;
+  if (kind === "rain") return <CloudRain size={size} color={color} />;
+  if (kind === "snow") return <CloudSnow size={size} color={color} />;
+  if (kind === "fog") return <CloudFog size={size} color={color} />;
+  if (kind === "cloudy") return <Cloud size={size} color={color} />;
+  return <Sun size={size} color={color} />;
+}
+
+function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onEnableDemo, weatherLocation, weather, weatherLoading, weatherError, onWeather, onRefreshWeather }: {
   locale: Locale;
   profile: ProfileState;
   mode: string;
@@ -873,19 +950,32 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
   hasWardrobe: boolean;
   onAddPhoto: () => void;
   onEnableDemo: () => void;
+  weatherLocation: WeatherLocation | undefined;
+  weather: WeatherSnapshot | undefined;
+  weatherLoading: boolean;
+  weatherError: boolean;
+  onWeather: () => void;
+  onRefreshWeather: () => void;
 }) {
+  const roundedTemperature = weather ? Math.round(weather.temperatureC) : undefined;
+  const feelsLike = weather ? Math.round(weather.feelsLikeC) : undefined;
   return (
     <View>
       <View style={styles.greetingRow}>
-        <View style={{ flex: 1 }}><Text style={styles.eyebrow}>{tx(locale, "СЕГОДНЯ · 17°", "TODAY · 17°")}</Text><Text style={styles.heroTitle}>{tx(locale, `Привет, ${profile.nickname}`, `Hey, ${profile.nickname}`)}</Text></View>
-        <View style={styles.weatherOrb}><Text style={styles.weatherEmoji}>☼</Text><Text style={styles.weatherTemp}>17°</Text></View>
+        <View style={{ flex: 1 }}><Text style={styles.eyebrow}>{weather ? tx(locale, `СЕГОДНЯ · ${weatherLabel(weather, locale).toUpperCase()}`, `TODAY · ${weatherLabel(weather, locale).toUpperCase()}`) : tx(locale, "СЕГОДНЯ · УКАЖИ ГОРОД", "TODAY · SET YOUR CITY")}</Text><Text style={styles.heroTitle}>{tx(locale, `Привет, ${profile.nickname}`, `Hey, ${profile.nickname}`)}</Text></View>
+        <Pressable onPress={onWeather} accessibilityRole="button" accessibilityLabel={tx(locale, "Выбрать город и погоду", "Choose city and weather")} style={styles.weatherOrb}>{weatherLoading && !weather ? <ActivityIndicator size="small" color={colors.graphite} /> : weather ? <WeatherGlyph snapshot={weather} /> : <MapPin size={19} color={colors.graphite} />}<Text style={styles.weatherTemp}>{roundedTemperature === undefined ? "—" : `${roundedTemperature}°`}</Text></Pressable>
       </View>
       <Pressable onPress={onChooseToday} accessibilityRole="button" style={({ pressed }) => [styles.todayDecision, pressed && { transform: [{ scale: 0.985 }] }]}>
         <LinearGradient colors={["#17131D", "#3A2868", "#6C4BFF"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-        <View style={styles.todayDecisionTop}><View style={styles.todayDecisionMark}><WandSparkles size={21} color={colors.graphite} /></View><Text style={styles.todayDecisionMeta}>{tx(locale, "17° · ИЗ ТВОЕГО ШКАФА", "17° · FROM YOUR CLOSET")}</Text></View>
+        <View style={styles.todayDecisionTop}><View style={styles.todayDecisionMark}><WandSparkles size={21} color={colors.graphite} /></View><Text style={styles.todayDecisionMeta}>{weatherLocation ? weather ? `${roundedTemperature}° · ${weatherLocation.name.toUpperCase()}` : tx(locale, `${weatherLocation.name.toUpperCase()} · ОБНОВЛЯЮ`, `${weatherLocation.name.toUpperCase()} · UPDATING`) : tx(locale, "ВЫБЕРИ ГОРОД · ТВОЙ ШКАФ", "CHOOSE CITY · YOUR CLOSET")}</Text></View>
         <Text style={styles.todayDecisionTitle}>{tx(locale, "Что надеть сегодня", "What should I wear today")}</Text>
-        <View style={styles.todayDecisionBottom}><Text style={styles.todayDecisionHint}>{mode === "family" ? tx(locale, "Практично и по погоде", "Practical and weather-ready") : tx(locale, "Один ответ вместо долгого выбора", "One answer instead of a long decision")}</Text><View style={styles.todayDecisionArrow}><ChevronRight size={20} color={colors.graphite} /></View></View>
+        <View style={styles.todayDecisionBottom}><Text style={styles.todayDecisionHint}>{weather ? weatherAdvice(weather, locale) : mode === "family" ? tx(locale, "Добавь город — учту реальную погоду", "Add your city for real weather guidance") : tx(locale, "Город нужен для точного образа", "Your city makes the look weather-aware")}</Text><View style={styles.todayDecisionArrow}><ChevronRight size={20} color={colors.graphite} /></View></View>
       </Pressable>
+      {weather && weatherLocation ? <Pressable onPress={onWeather} style={styles.weatherContextCard}>
+        <View style={styles.weatherContextTop}><View style={styles.weatherContextIcon}><WeatherGlyph snapshot={weather} size={20} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.weatherContextCity}>{weatherLocation.name}</Text><Text style={styles.weatherContextCondition}>{weatherLabel(weather, locale)} · {tx(locale, `ощущается как ${feelsLike}°`, `feels like ${feelsLike}°`)}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
+        <Text style={styles.weatherContextAdvice}>{weatherAdvice(weather, locale)}</Text>
+        <View style={styles.weatherMetrics}><View style={styles.weatherMetric}><Droplets size={14} color={colors.cyan} /><Text style={styles.weatherMetricText}>{Math.round(weather.precipitationProbability)}%</Text></View><View style={styles.weatherMetric}><Wind size={14} color={colors.ultraviolet} /><Text style={styles.weatherMetricText}>{Math.round(weather.windKph)} {tx(locale, "км/ч", "km/h")}</Text></View><Text style={styles.weatherSource}>Open-Meteo</Text></View>
+      </Pressable> : <View style={styles.weatherSetupCard}><View style={styles.weatherSetupIcon}><MapPin size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.weatherSetupTitle}>{weatherError ? tx(locale, "Не удалось обновить погоду", "Could not update weather") : tx(locale, "В каком ты городе?", "What city are you in?")}</Text><Text style={styles.weatherSetupBody}>{weatherError ? tx(locale, "Проверь интернет или выбери город ещё раз.", "Check your connection or choose the city again.") : tx(locale, "MIRA будет учитывать температуру, дождь и ветер.", "MIRA will use temperature, rain, and wind.")}</Text></View><Pressable onPress={weatherError && weatherLocation ? onRefreshWeather : onWeather} style={styles.weatherSetupButton}><Text style={styles.weatherSetupButtonText}>{weatherError && weatherLocation ? tx(locale, "Ещё раз", "Retry") : tx(locale, "Выбрать", "Choose")}</Text></Pressable></View>}
       <View style={styles.styleDna}>
         <View style={styles.styleStripe}>{["#C9C2B8", "#222126", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View>
         <View style={styles.styleDnaCopy}><Text style={styles.miniLabel}>STYLE DNA</Text><Text numberOfLines={1} style={styles.styleDnaName}>{styleNames.join(" + ")}</Text></View>
@@ -1220,6 +1310,46 @@ function SchoolPreferences({ locale, age, value, onChange }: { locale: Locale; a
   return <View style={styles.schoolCodeGrid}>{options.map((option) => { const selected = value === option.id; return <Pressable key={option.id} onPress={() => onChange(option.id)} style={[styles.schoolCodeCard, selected && styles.schoolCodeCardActive]}><View style={styles.schoolCodeArt}><SchoolDressCodeIllustration mode={option.id} active={selected} /></View><View style={{ flex: 1 }}><Text style={[styles.schoolCodeTitle, selected && styles.schoolCodeTitleActive]}>{option.title}</Text><Text style={[styles.schoolCodeBody, selected && styles.schoolCodeBodyActive]}>{option.body}</Text></View>{selected && <Check size={16} color={colors.paper} />}</Pressable>; })}</View>;
 }
 
+function WeatherScreen({ locale, current, onSelect, onClose }: { locale: Locale; current: WeatherLocation | undefined; onSelect: (location: WeatherLocation) => Promise<void>; onClose: () => void }) {
+  const [query, setQuery] = useState(current?.name ?? "");
+  const [results, setResults] = useState<WeatherLocation[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const submit = async () => {
+    if (query.trim().length < 2) {
+      setError(tx(locale, "Введи хотя бы две буквы", "Enter at least two letters"));
+      return;
+    }
+    setLoading(true);
+    setError(undefined);
+    setSearched(true);
+    try {
+      setResults(await searchWeatherLocations(query, locale));
+    } catch {
+      setResults([]);
+      setError(tx(locale, "Не получилось найти город. Проверь интернет и попробуй ещё раз.", "Could not search for that city. Check your connection and try again."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.fullScreen}>
+    <OverlayHeader title={tx(locale, "Город и погода", "City and weather")} onClose={onClose} />
+    <ScrollView contentContainerStyle={styles.weatherScreenContent} keyboardShouldPersistTaps="handled">
+      <View style={styles.weatherScreenHero}><LinearGradient colors={["#E7E0FF", "#DDF3F1", "#FFE8CD"]} style={StyleSheet.absoluteFill} /><View style={styles.weatherScreenHeroIcon}><Cloud size={28} color={colors.ultraviolet} /></View><Text style={styles.weatherScreenTitle}>{tx(locale, "Реальная погода — реальный образ", "Real weather, a wearable look")}</Text><Text style={styles.weatherScreenLead}>{tx(locale, "Введи город. MIRA учтёт ощущаемую температуру, осадки и ветер, но не будет запрашивать точную геолокацию.", "Enter your city. MIRA uses feels-like temperature, rain, and wind without requesting your exact location.")}</Text></View>
+      {current && <View style={styles.currentCityCard}><View style={styles.currentCityIcon}><MapPin size={18} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.currentCityLabel}>{tx(locale, "СЕЙЧАС ВЫБРАН", "CURRENT CITY")}</Text><Text style={styles.currentCityName}>{current.name}</Text><Text style={styles.currentCityMeta}>{[current.admin1, current.country].filter(Boolean).join(", ")}</Text></View><Check size={18} color={colors.success} /></View>}
+      <Text style={styles.weatherInputLabel}>{tx(locale, "НАЙТИ ГОРОД", "FIND A CITY")}</Text>
+      <View style={styles.weatherSearchRow}><View style={styles.weatherSearchInput}><Search size={18} color={colors.secondary} /><TextInput value={query} onChangeText={setQuery} onSubmitEditing={() => void submit()} autoCapitalize="words" returnKeyType="search" placeholder={tx(locale, "Например: Дубай, Москва, Алматы", "For example: Dubai, London, Toronto")} placeholderTextColor="#A19BAA" style={styles.weatherSearchText} /></View><Pressable onPress={() => void submit()} disabled={loading} style={styles.weatherSearchButton}>{loading ? <ActivityIndicator size="small" color={colors.paper} /> : <ChevronRight size={20} color={colors.paper} />}</Pressable></View>
+      {error && <Text style={styles.weatherSearchError}>{error}</Text>}
+      {results.length > 0 && <View style={styles.weatherResults}>{results.map((item) => <Pressable key={`${item.id}-${item.latitude}`} onPress={() => void onSelect(item)} style={styles.weatherResult}><View style={styles.weatherResultPin}><MapPin size={16} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.weatherResultName}>{item.name}</Text><Text numberOfLines={1} style={styles.weatherResultMeta}>{[item.admin1, item.country].filter((part, index, all) => Boolean(part) && all.indexOf(part) === index).join(", ")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>)}</View>}
+      {searched && !loading && !error && !results.length && <View style={styles.weatherEmpty}><Search size={21} color={colors.secondary} /><Text style={styles.weatherEmptyText}>{tx(locale, "Ничего не нашлось. Попробуй написать название иначе.", "No matches. Try another spelling.")}</Text></View>}
+      <View style={styles.weatherPrivacy}><LockKeyhole size={16} color={colors.ultraviolet} /><Text style={styles.weatherPrivacyText}>{tx(locale, "Сохраняется только выбранный город. Данные о погоде: Open-Meteo.", "Only your selected city is saved. Weather data: Open-Meteo.")}</Text></View>
+    </ScrollView>
+  </KeyboardAvoidingView>;
+}
+
 function ChatScreen({ locale, age, token, onClose }: { locale: Locale; age: number; token: string | undefined; onClose: () => void }) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selected, setSelected] = useState<ConversationSummary>();
@@ -1299,8 +1429,7 @@ const styles = StyleSheet.create({
   eyebrow: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.ultraviolet, letterSpacing: 1.2, marginBottom: 7 },
   heroTitle: { fontFamily: typography.display, fontSize: 29, lineHeight: 35, color: colors.graphite, letterSpacing: -1.5 },
   screenTitle: { fontFamily: typography.display, fontSize: 28, lineHeight: 34, color: colors.graphite, letterSpacing: -1.4 },
-  weatherOrb: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.warm, alignItems: "center", justifyContent: "center" },
-  weatherEmoji: { fontSize: 17, lineHeight: 18 },
+  weatherOrb: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.warm, alignItems: "center", justifyContent: "center", gap: 2 },
   weatherTemp: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
   lead: { fontFamily: typography.body, fontSize: 14, lineHeight: 21, color: colors.secondary, marginTop: 9, marginBottom: 17 },
   todayDecision: { minHeight: 186, borderRadius: 28, overflow: "hidden", padding: 18, marginTop: 18, marginBottom: 14, justifyContent: "space-between" },
@@ -1311,6 +1440,22 @@ const styles = StyleSheet.create({
   todayDecisionBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   todayDecisionHint: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 10, lineHeight: 15, color: "#D7D0E1" },
   todayDecisionArrow: { width: 39, height: 39, borderRadius: 14, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
+  weatherContextCard: { borderRadius: 21, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 13, marginBottom: 14 },
+  weatherContextTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  weatherContextIcon: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  weatherContextCity: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite },
+  weatherContextCondition: { fontFamily: typography.body, fontSize: 9, color: colors.secondary, marginTop: 3 },
+  weatherContextAdvice: { fontFamily: typography.bodyMedium, fontSize: 10, lineHeight: 15, color: colors.graphite, marginTop: 11 },
+  weatherMetrics: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 11 },
+  weatherMetric: { height: 28, borderRadius: 12, backgroundColor: colors.porcelain, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8 },
+  weatherMetricText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.secondary },
+  weatherSource: { marginLeft: "auto", fontFamily: typography.body, fontSize: 7.5, color: colors.secondary },
+  weatherSetupCard: { minHeight: 76, borderRadius: 20, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: 14 },
+  weatherSetupIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  weatherSetupTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  weatherSetupBody: { fontFamily: typography.body, fontSize: 8.5, lineHeight: 12.5, color: colors.secondary, marginTop: 3 },
+  weatherSetupButton: { minHeight: 34, borderRadius: 13, backgroundColor: colors.graphite, alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  weatherSetupButtonText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.paper },
   styleDna: { height: 62, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, borderRadius: 18, overflow: "hidden", flexDirection: "row", alignItems: "center", paddingRight: 14, marginBottom: 14 },
   styleStripe: { width: 8, alignSelf: "stretch" },
   styleDnaCopy: { flex: 1, paddingHorizontal: 13 },
@@ -1552,6 +1697,31 @@ const styles = StyleSheet.create({
   toastText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.paper, textAlign: "center" },
   overlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: colors.porcelain },
   fullScreen: { flex: 1, backgroundColor: colors.porcelain },
+  weatherScreenContent: { paddingHorizontal: 18, paddingBottom: 40 },
+  weatherScreenHero: { minHeight: 218, borderRadius: 26, overflow: "hidden", padding: 19, marginBottom: 15 },
+  weatherScreenHeroIcon: { width: 54, height: 54, borderRadius: 19, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
+  weatherScreenTitle: { maxWidth: 330, fontFamily: typography.displaySoft, fontSize: 20, lineHeight: 26, color: colors.graphite, marginTop: 18 },
+  weatherScreenLead: { maxWidth: 360, fontFamily: typography.body, fontSize: 10.5, lineHeight: 16.5, color: colors.secondary, marginTop: 8 },
+  currentCityCard: { minHeight: 78, borderRadius: 20, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: 17 },
+  currentCityIcon: { width: 41, height: 41, borderRadius: 15, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  currentCityLabel: { fontFamily: typography.bodySemibold, fontSize: 7, letterSpacing: 0.9, color: colors.secondary },
+  currentCityName: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite, marginTop: 3 },
+  currentCityMeta: { fontFamily: typography.body, fontSize: 8.5, color: colors.secondary, marginTop: 2 },
+  weatherInputLabel: { fontFamily: typography.bodySemibold, fontSize: 8.5, letterSpacing: 1.1, color: colors.secondary, marginBottom: 8 },
+  weatherSearchRow: { flexDirection: "row", gap: 8 },
+  weatherSearchInput: { flex: 1, height: 49, borderRadius: 17, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 13 },
+  weatherSearchText: { flex: 1, fontFamily: typography.body, fontSize: 10.5, color: colors.graphite, outlineStyle: "none" } as never,
+  weatherSearchButton: { width: 49, height: 49, borderRadius: 17, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  weatherSearchError: { fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 14, color: colors.danger, marginTop: 9 },
+  weatherResults: { gap: 8, marginTop: 13 },
+  weatherResult: { minHeight: 64, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12 },
+  weatherResultPin: { width: 35, height: 35, borderRadius: 13, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  weatherResultName: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite },
+  weatherResultMeta: { fontFamily: typography.body, fontSize: 8.5, color: colors.secondary, marginTop: 3 },
+  weatherEmpty: { minHeight: 90, borderRadius: 18, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", gap: 8, padding: 14, marginTop: 13 },
+  weatherEmptyText: { fontFamily: typography.body, fontSize: 9.5, lineHeight: 14, color: colors.secondary, textAlign: "center" },
+  weatherPrivacy: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 17, backgroundColor: colors.violetMist, padding: 12, marginTop: 16 },
+  weatherPrivacyText: { flex: 1, fontFamily: typography.body, fontSize: 8.8, lineHeight: 13.5, color: colors.secondary },
   tryOnContent: { paddingHorizontal: 18, paddingBottom: 38 },
   tryOnHero: { minHeight: 238, borderRadius: 28, padding: 22, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   tryOnHeroIcon: { width: 58, height: 58, borderRadius: 21, backgroundColor: "#FFFFFF1C", alignItems: "center", justifyContent: "center" },
