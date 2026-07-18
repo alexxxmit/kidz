@@ -82,11 +82,10 @@ import {
   type SocialSearchAccount,
 } from "../src/api";
 import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS } from "../src/appearance";
-import { STARTER_WARDROBE } from "../src/demo";
 import { BeautyReference, GarmentIllustration, OccasionIllustration, SchoolDressCodeIllustration, garmentPhotoReference } from "../src/illustrations";
 import { lookSignature, rankOutfitsWithLearning, type LookFeedback } from "../src/learning";
 import { discardExpiredWebPhotos, isEphemeralWebImage, pickerImageDataUrl } from "../src/media";
-import { CHALLENGES, demoOutfits, editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
+import { CHALLENGES, editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
 import { colors, typography } from "../src/theme";
 
 type Tab = "today" | "circle" | "create" | "closet" | "me";
@@ -118,6 +117,7 @@ const PROFILE_KEY = "mira.profile.v2";
 const TOKEN_KEY = "mira.session.v1";
 const WARDROBE_KEY = "mira.wardrobe.v1";
 const WARDROBE_CATALOG_KEY = "mira.wardrobe.catalog.v1";
+const DEMO_WARDROBE_KEY = "mira.demo-wardrobe.v1";
 const LOOK_FEEDBACK_KEY = "mira.look-feedback.v1";
 const WARDROBE_CATALOG_VERSION = "stockholm-reference-v2";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", guidanceComplete: false };
@@ -125,6 +125,7 @@ const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
 const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
 const displayHandle = (handle: string) => `@${handle.replace(/^@/, "")}`;
+const isDemoWardrobeItem = (item: WardrobeClientItem) => item.localId.startsWith("wardrobe-");
 const avatarColors = [colors.coral, colors.cyan, colors.warm, colors.ultraviolet];
 const livePost = (post: LookPost, myHandle: string): FeedPost => ({
   id: post.id,
@@ -230,11 +231,12 @@ export default function MiraApp() {
   const [onboardingStart, setOnboardingStart] = useState<"basics" | "appearance">("basics");
   const [tab, setTab] = useState<Tab>("today");
   const [token, setToken] = useState<string>();
-  const [wardrobe, setWardrobe] = useState<WardrobeClientItem[]>(wardrobePreview);
+  const [wardrobe, setWardrobe] = useState<WardrobeClientItem[]>([]);
+  const [demoWardrobeEnabled, setDemoWardrobeEnabled] = useState(false);
   const [lookFeedback, setLookFeedback] = useState<LookFeedback[]>([]);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FollowRequest[]>([]);
-  const [generated, setGenerated] = useState<OutfitOption[]>(() => demoOutfits("stockholm"));
+  const [generated, setGenerated] = useState<OutfitOption[]>([]);
   const [activeLook, setActiveLook] = useState(0);
   const [occasion, setOccasion] = useState("school");
   const [aiQuestion, setAiQuestion] = useState("");
@@ -263,8 +265,10 @@ export default function MiraApp() {
   }, [locale, profile.age, token]);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedFeedback]) => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback]) => {
       let savedLocale: Locale = defaultProfile.locale;
+      const restoreDemoWardrobe = savedDemoWardrobe === "true";
+      setDemoWardrobeEnabled(restoreDemoWardrobe);
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
@@ -286,13 +290,18 @@ export default function MiraApp() {
           if (restored.discarded) {
             setToast(tx(savedLocale, "Старое временное фото одежды истекло — добавь эту вещь ещё раз.", "An old temporary clothing photo expired — add that piece again."));
           }
-          if (savedCatalogVersion === WARDROBE_CATALOG_VERSION) {
-            setWardrobe(restored.items);
+          const personalItems = restored.items.filter((item) => !isDemoWardrobeItem(item));
+          if (!restoreDemoWardrobe) {
+            setWardrobe(personalItems);
+          } else if (savedCatalogVersion === WARDROBE_CATALOG_VERSION) {
+            const savedDemoItems = restored.items.filter(isDemoWardrobeItem);
+            setWardrobe([...personalItems, ...(savedDemoItems.length ? savedDemoItems : wardrobePreview)]);
           } else {
-            const personalItems = restored.items.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
             setWardrobe([...personalItems, ...wardrobePreview]);
           }
-        } catch { /* Start with the safe demo closet. */ }
+        } catch { setWardrobe(restoreDemoWardrobe ? wardrobePreview : []); }
+      } else if (restoreDemoWardrobe) {
+        setWardrobe(wardrobePreview);
       }
       void AsyncStorage.setItem(WARDROBE_CATALOG_KEY, WARDROBE_CATALOG_VERSION);
       setHydrated(true);
@@ -302,6 +311,10 @@ export default function MiraApp() {
   useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(WARDROBE_KEY, JSON.stringify(wardrobe));
   }, [hydrated, wardrobe]);
+
+  useEffect(() => {
+    if (hydrated) void AsyncStorage.setItem(DEMO_WARDROBE_KEY, String(demoWardrobeEnabled));
+  }, [demoWardrobeEnabled, hydrated]);
 
   useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(LOOK_FEEDBACK_KEY, JSON.stringify(lookFeedback.slice(-80)));
@@ -435,9 +448,11 @@ export default function MiraApp() {
   };
 
   const finishOnboarding = async (next: ProfileState) => {
+    const wasFirstRun = onboardingFirstRun;
     setProfile(next);
     setOnboardingFirstRun(false);
     setOverlay("none");
+    if (wasFirstRun) setTab("closet");
     await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
     if (token) {
       await updateSocialAccount(token, {
@@ -480,6 +495,11 @@ export default function MiraApp() {
   const generateFor = (target = profile, nextOccasion = occasion) => {
     const photographedWardrobe = wardrobe.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
     const recommendationWardrobe = photographedWardrobe.length ? photographedWardrobe : wardrobe;
+    if (!recommendationWardrobe.length) {
+      setGenerated([]);
+      setActiveLook(0);
+      return;
+    }
     const options = generateOutfits({
       profile: {
         displayName: target.nickname,
@@ -507,6 +527,11 @@ export default function MiraApp() {
   const askMira = async (question = aiQuestion) => {
     const normalized = question.trim();
     if (!normalized) return;
+    if (!wardrobe.length) {
+      setAiQuestion(normalized);
+      setAiAnswer(tx(locale, "Сначала добавь хотя бы пару своих вещей. Если хочешь просто посмотреть механику — демо-шкаф можно включить отдельно.", "Add at least a couple of your own pieces first. If you only want to explore the flow, you can turn on the demo closet separately."));
+      return;
+    }
     setAiLoading(true);
     setAiQuestion(normalized);
     try {
@@ -531,6 +556,11 @@ export default function MiraApp() {
   };
 
   const chooseToday = () => {
+    if (!wardrobe.length) {
+      setTab("closet");
+      notify(tx(locale, "Сначала добавь вещь или включи демо по желанию", "Add a piece first, or turn on the demo if you want"));
+      return;
+    }
     setOccasion("everyday");
     generateFor(profile, "everyday");
     scrollRef.current?.scrollTo({ y: 110, animated: true });
@@ -538,6 +568,10 @@ export default function MiraApp() {
   };
 
   const runAiQuickAction = (action: "alternative" | "school" | "closet") => {
+    if (!wardrobe.length) {
+      setAiAnswer(tx(locale, "Шкаф пока пуст. Добавь свои вещи или включи демо по желанию — без этого MIRA не будет придумывать несуществующий гардероб.", "Your closet is empty. Add your own pieces or opt into the demo; MIRA will not invent clothes you do not own."));
+      return;
+    }
     if (action === "alternative") {
       setActiveLook((current) => generated.length ? (current + 1) % generated.length : 0);
       setAiAnswer(tx(locale, "Показываю другой вариант — с тем же настроением, но другой основой.", "Here is another option with the same mood and a different base."));
@@ -590,6 +624,18 @@ export default function MiraApp() {
     setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, ...patch } : item));
   };
 
+  const enableDemoWardrobe = () => {
+    setDemoWardrobeEnabled(true);
+    setWardrobe((items) => [...items.filter((item) => !isDemoWardrobeItem(item)), ...wardrobePreview]);
+    notify(tx(locale, "Демо-шкаф включён — можно посмотреть, как работает MIRA", "Demo closet is on — you can explore how MIRA works"));
+  };
+
+  const disableDemoWardrobe = () => {
+    setDemoWardrobeEnabled(false);
+    setWardrobe((items) => items.filter((item) => !isDemoWardrobeItem(item)));
+    notify(tx(locale, "Демо-вещи убраны", "Demo pieces removed"));
+  };
+
   const addPhoto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.62, allowsEditing: false, base64: true });
     if (result.canceled || !result.assets[0]) return;
@@ -599,7 +645,8 @@ export default function MiraApp() {
     const durableSource = Platform.OS === "web" ? await preparePersistentWebSource(asset.uri, pickerDataUrl) : asset.uri;
     const storedSource = await persistWardrobeImage(durableSource, localId, "source").catch(() => durableSource);
     const draftItem = { name: tx(locale, "AI распознаёт вещь…", "AI is scanning this piece…"), category: "tshirt" as const, slot: "top" as const, colors: ["#808080"], warmth: 1, styleIds: profile.styles, careState: "CLEAN" as const, fitState: "FITS" as const, imageUri: storedSource, imageProcessingState: "PENDING_CUTOUT" as const, localId };
-    setWardrobe((items) => [draftItem, ...items]);
+    setDemoWardrobeEnabled(false);
+    setWardrobe((items) => [draftItem, ...items.filter((item) => !isDemoWardrobeItem(item))]);
     notify(tx(locale, "Фото добавлено · AI распознаёт вещь и вырезает фон", "Photo added · AI is identifying the piece and removing its background"));
     if (asset.base64) {
       if (token) {
@@ -678,11 +725,12 @@ export default function MiraApp() {
 
   const removeAccount = async () => {
     if (token) await deleteAccount(token).catch(() => undefined);
-    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), storage.deleteToken()]);
+    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), storage.deleteToken()]);
     if (Platform.OS !== "web" && wardrobeDirectory) await FileSystem.deleteAsync(wardrobeDirectory, { idempotent: true }).catch(() => undefined);
     setToken(undefined);
     setProfile(defaultProfile);
-    setWardrobe(wardrobePreview);
+    setWardrobe([]);
+    setDemoWardrobeEnabled(false);
     setLookFeedback([]);
     setPosts([]);
     setOnboardingFirstRun(true);
@@ -724,6 +772,9 @@ export default function MiraApp() {
                 onGuidance={openGuidanceSetup}
                 onCreate={() => setTab("create")}
                 onPublish={publishCurrent}
+                hasWardrobe={wardrobe.length > 0}
+                onAddPhoto={addPhoto}
+                onEnableDemo={enableDemoWardrobe}
               />
             )}
             {tab === "circle" && (
@@ -752,9 +803,12 @@ export default function MiraApp() {
                 regenerate={() => generateFor()}
                 publish={publishCurrent}
                 tryOn={openTryOn}
+                hasWardrobe={wardrobe.length > 0}
+                onAddPhoto={addPhoto}
+                onEnableDemo={enableDemoWardrobe}
               />
             )}
-            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} addPhoto={addPhoto} onUpdate={updateWardrobeItem} />}
+            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} demoMode={demoWardrobeEnabled} addPhoto={addPhoto} onEnableDemo={enableDemoWardrobe} onDisableDemo={disableDemoWardrobe} onUpdate={updateWardrobeItem} />}
             {tab === "me" && (
               <ProfileScreen
                 locale={locale}
@@ -797,7 +851,7 @@ function AppHeader({ locale, profile, socialEnabled, onChat, onPlus }: { locale:
   );
 }
 
-function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish }: {
+function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onEnableDemo }: {
   locale: Locale;
   profile: ProfileState;
   mode: string;
@@ -816,6 +870,9 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
   onGuidance: () => void;
   onCreate: () => void;
   onPublish: () => void;
+  hasWardrobe: boolean;
+  onAddPhoto: () => void;
+  onEnableDemo: () => void;
 }) {
   return (
     <View>
@@ -834,6 +891,7 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
         <View style={styles.styleDnaCopy}><Text style={styles.miniLabel}>STYLE DNA</Text><Text numberOfLines={1} style={styles.styleDnaName}>{styleNames.join(" + ")}</Text></View>
         <ChevronRight size={18} color={colors.graphite} />
       </View>
+      {!hasWardrobe && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onEnableDemo={onEnableDemo} />}
       {look && (
         <View style={styles.heroLookCard}>
           <LinearGradient colors={["#ECE8FF", "#F7E9F0", "#E7F5F5"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
@@ -940,7 +998,7 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   );
 }
 
-function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish, tryOn }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void }) {
+function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onEnableDemo }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onEnableDemo: () => void }) {
   const look = outfits[activeLook];
   return (
     <View>
@@ -950,11 +1008,14 @@ function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outf
         {([{ id: "school", label: tx(locale, "Школа", "School") }, { id: "walk", label: tx(locale, "Прогулка", "Out") }, { id: "party", label: tx(locale, "Вечеринка", "Party") }, { id: "sport", label: tx(locale, "Спорт", "Sport") }] as const).map(({ id, label }) => <Pressable key={id} onPress={() => setOccasion(id)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><OccasionIllustration occasion={id} active={occasion === id} /><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
       </ScrollView>
       <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
+      {!look && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onEnableDemo={onEnableDemo} hasSomePieces={hasWardrobe} />}
       {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} profile={profile} referenceVariant={activeLook} /></View>}
-      <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
-      <Pressable onPress={tryOn} style={styles.tryOnAction}><View style={styles.tryOnActionIcon}><Camera size={20} color={colors.paper} /></View><View style={{ flex: 1 }}><Text style={styles.tryOnActionTitle}>{tx(locale, "Примерить на своём фото", "Try it on my photo")}</Text><Text style={styles.tryOnActionBody}>{tx(locale, "Одежда + укладка + макияж · AI-фоторендер", "Outfit + hair + makeup · AI photo render")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
-      <View style={styles.builderActions}><Pressable onPress={regenerate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Ещё варианты", "New options")}</Text></Pressable><Pressable onPress={publish} style={styles.primaryAction}><ImagePlus size={17} color={colors.paper} /><Text style={styles.primaryActionText}>{tx(locale, "Опубликовать", "Share look")}</Text></Pressable></View>
-      <View style={styles.tipCard}><WandSparkles size={19} color={colors.ultraviolet} /><Text style={styles.tipText}>{tx(locale, "Нажми на вещь в готовом образе, чтобы заменить только её — остальной mood сохранится.", "Tap a piece to swap only that item while keeping the mood.")}</Text></View>
+      {look && <>
+        <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
+        <Pressable onPress={tryOn} style={styles.tryOnAction}><View style={styles.tryOnActionIcon}><Camera size={20} color={colors.paper} /></View><View style={{ flex: 1 }}><Text style={styles.tryOnActionTitle}>{tx(locale, "Примерить на своём фото", "Try it on my photo")}</Text><Text style={styles.tryOnActionBody}>{tx(locale, "Одежда + укладка + макияж · AI-фоторендер", "Outfit + hair + makeup · AI photo render")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
+        <View style={styles.builderActions}><Pressable onPress={regenerate} style={styles.secondaryAction}><Shuffle size={17} color={colors.graphite} /><Text style={styles.secondaryActionText}>{tx(locale, "Ещё варианты", "New options")}</Text></Pressable><Pressable onPress={publish} style={styles.primaryAction}><ImagePlus size={17} color={colors.paper} /><Text style={styles.primaryActionText}>{tx(locale, "Опубликовать", "Share look")}</Text></Pressable></View>
+        <View style={styles.tipCard}><WandSparkles size={19} color={colors.ultraviolet} /><Text style={styles.tipText}>{tx(locale, "Нажми на вещь в готовом образе, чтобы заменить только её — остальной mood сохранится.", "Tap a piece to swap only that item while keeping the mood.")}</Text></View>
+      </>}
     </View>
   );
 }
@@ -990,17 +1051,32 @@ function TryOnScreen({ locale, look, state, allowHairColorPreview, setAllowHairC
   </View>;
 }
 
-function ClosetScreen({ locale, wardrobe, addPhoto, onUpdate }: { locale: Locale; wardrobe: WardrobeClientItem[]; addPhoto: () => void; onUpdate: (localId: string, patch: Partial<WardrobeClientItem>) => void }) {
+function WardrobeStartCard({ locale, onAddPhoto, onEnableDemo, hasSomePieces = false }: { locale: Locale; onAddPhoto: () => void; onEnableDemo: () => void; hasSomePieces?: boolean }) {
+  return <View style={styles.wardrobeStartCard}>
+    <LinearGradient colors={["#F0ECFF", "#FFF4F5", "#EDF8F7"]} style={StyleSheet.absoluteFill} />
+    <View style={styles.wardrobeStartIcon}><ImagePlus size={25} color={colors.ultraviolet} /></View>
+    <Text style={styles.wardrobeStartTitle}>{hasSomePieces ? tx(locale, "Добавь ещё несколько вещей", "Add a few more pieces") : tx(locale, "Начни со своих вещей", "Start with your own pieces")}</Text>
+    <Text style={styles.wardrobeStartBody}>{hasSomePieces ? tx(locale, "Для полноценного образа нужны хотя бы верх и низ или платье. Обувь и аксессуары можно добавить позже.", "A complete look needs at least a top and bottom, or a dress. Shoes and accessories can come later.") : tx(locale, "Сфотографируй одежду — AI вырежет фон, распознает вещь и будет собирать образы только из твоего шкафа.", "Photograph your clothes. AI removes the background, identifies each piece, and builds looks only from your closet.")}</Text>
+    <Pressable onPress={onAddPhoto} style={styles.wardrobeStartPrimary}><Camera size={18} color={colors.paper} /><Text style={styles.wardrobeStartPrimaryText}>{hasSomePieces ? tx(locale, "Добавить ещё вещь", "Add another piece") : tx(locale, "Добавить первую вещь", "Add my first piece")}</Text></Pressable>
+    {!hasSomePieces && <>
+      <View style={styles.wardrobeStartDivider}><View style={styles.wardrobeStartLine} /><Text style={styles.wardrobeStartOr}>{tx(locale, "ИЛИ", "OR")}</Text><View style={styles.wardrobeStartLine} /></View>
+      <Pressable onPress={onEnableDemo} style={styles.wardrobeStartDemo}><Sparkles size={17} color={colors.ultraviolet} /><View style={{ flex: 1 }}><Text style={styles.wardrobeStartDemoTitle}>{tx(locale, "Посмотреть, как работает приложение", "See how the app works")}</Text><Text style={styles.wardrobeStartDemoBody}>{tx(locale, "Демо-гардероб появится только после нажатия", "The demo closet appears only after you choose it")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
+    </>}
+  </View>;
+}
+
+function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, onEnableDemo, onDisableDemo, onUpdate }: { locale: Locale; wardrobe: WardrobeClientItem[]; demoMode: boolean; addPhoto: () => void; onEnableDemo: () => void; onDisableDemo: () => void; onUpdate: (localId: string, patch: Partial<WardrobeClientItem>) => void }) {
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string>();
-  const photographed = wardrobe.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
-  const activeWardrobe = photographed.length ? photographed : wardrobe;
-  const visible = filter === "all" ? activeWardrobe : activeWardrobe.filter((item) => item.slot === filter);
-  const selected = activeWardrobe.find((item) => item.localId === selectedId);
+  const personalItems = wardrobe.filter((item) => !isDemoWardrobeItem(item));
+  const visible = filter === "all" ? wardrobe : wardrobe.filter((item) => item.slot === filter);
+  const selected = wardrobe.find((item) => item.localId === selectedId);
   return (
     <View>
       <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{tx(locale, "ТВОИ РЕАЛЬНЫЕ ВЕЩИ", "YOUR REAL PIECES")}</Text><Text style={styles.screenTitle}>{tx(locale, "Шкаф", "Closet")}</Text></View><Pressable onPress={addPhoto} style={styles.addRound}><Plus size={22} color={colors.paper} /></Pressable></View>
-      <View style={styles.closetStats}><View><Text style={styles.statValue}>{activeWardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{photographed.length ? "100%" : "DEMO"}</Text><Text style={styles.statLabel}>{tx(locale, photographed.length ? "твои" : "пример", photographed.length ? "yours" : "sample")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{photographed.length ? "AI" : "3"}</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
+      {!wardrobe.length ? <WardrobeStartCard locale={locale} onAddPhoto={addPhoto} onEnableDemo={onEnableDemo} /> : <>
+      {demoMode && <View style={styles.demoModeBanner}><View style={styles.demoModeIcon}><Sparkles size={17} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.demoModeTitle}>{tx(locale, "Сейчас включён демо-шкаф", "Demo closet is on")}</Text><Text style={styles.demoModeBody}>{tx(locale, "Это только пример. Добавь свою вещь — демо автоматически исчезнет.", "This is only a preview. Add your own piece and the demo will disappear automatically.")}</Text></View><Pressable onPress={onDisableDemo} style={styles.demoModeExit}><Text style={styles.demoModeExitText}>{tx(locale, "Убрать", "Remove")}</Text></Pressable></View>}
+      <View style={styles.closetStats}><View><Text style={styles.statValue}>{wardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{demoMode ? "DEMO" : "100%"}</Text><Text style={styles.statLabel}>{demoMode ? tx(locale, "пример", "sample") : tx(locale, "твои", "yours")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{personalItems.length ? "AI" : "3"}</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
       <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Сфотографируй вещь", "Photograph a piece")}</Text><Text style={styles.scanBody}>{tx(locale, "AI вырежет фон и заполнит карточку", "AI removes the background and fills the details")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>{[["all", tx(locale, "Все", "All")], ["top", tx(locale, "Верх", "Tops")], ["bottom", tx(locale, "Низ", "Bottoms")], ["footwear", tx(locale, "Обувь", "Shoes")], ["bag", tx(locale, "Сумки", "Bags")], ["jewelry", tx(locale, "Украшения", "Jewelry")]].map(([id, label]) => <Pressable key={id} onPress={() => setFilter(id!)} style={[styles.filterChip, filter === id && styles.filterChipActive]}><Text style={[styles.filterText, filter === id && styles.filterTextActive]}>{label}</Text></Pressable>)}</ScrollView>
       {selected && <View style={styles.wardrobeStatusPanel}>
@@ -1012,6 +1088,7 @@ function ClosetScreen({ locale, wardrobe, addPhoto, onUpdate }: { locale: Locale
         </View>
       </View>}
       <View style={styles.closetGrid}>{visible.map((item) => <Pressable key={item.localId} onPress={() => setSelectedId((current) => current === item.localId ? undefined : item.localId)} style={[styles.closetItem, selectedId === item.localId && styles.closetItemSelected]}><View style={styles.closetArt}>{item.imageUri || item.cutoutUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <GarmentIllustration item={item} height={104} />}{item.imageProcessingState === "PENDING_CUTOUT" && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>AI</Text></View>}{item.favorite && <View style={styles.favoriteBadge}><Heart size={11} color={colors.coral} fill={colors.coral} /></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={[styles.closetMeta, item.careState === "LAUNDRY" && { color: colors.danger }]}>{item.careState === "LAUNDRY" ? tx(locale, "в стирке", "laundry") : item.usageTag === "RARE" ? tx(locale, "редко ношу", "rarely worn") : item.favorite ? tx(locale, "любимая", "favorite") : tx(locale, "готово", "ready")}</Text></Pressable>)}</View>
+      </>}
     </View>
   );
 }
@@ -1116,7 +1193,7 @@ function Onboarding({ initial, firstRun, startAt, onDone, onClose }: { initial: 
         {stage === "appearance" && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Сделаем советы точнее", "Make guidance more precise")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Пол и параметры волос нужны для укладки и возрастных рекомендаций по макияжу. Они не показываются другим.", "Gender and hair details shape hair and age-aware makeup guidance. They are never shown to others.")}</Text><AppearanceCustomizer locale={draft.locale} gender={draft.genderPresentation} hair={draft.hairProfile} onGenderChange={(genderPresentation) => setDraft((current) => ({ ...current, genderPresentation }))} onHairChange={(hairProfile) => setDraft((current) => ({ ...current, hairProfile }))} /></>}
         {stage === "school" && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Школу настроим позже", "We’ll set up school later") : tx(draft.locale, "Как одеваются в школу?", "What is your school dress code?")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Этот вопрос появится, когда школьные образы станут актуальны.", "This choice will appear when school looks become relevant.") : tx(draft.locale, "MIRA не будет придумывать форму, если её нет. Выбери реальное правило своей школы.", "MIRA will not invent a uniform when there isn’t one. Choose your real school rule.")}</Text><SchoolPreferences locale={draft.locale} age={draft.age} value={draft.schoolDressCode} onChange={(schoolDressCode) => setDraft((current) => ({ ...current, schoolDressCode }))} /></>}
       </ScrollView>
-      <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={!canContinue} onPress={() => step < stages.length - 1 ? setStep((value) => value + 1) : finish()} style={[styles.onboardingCta, !canContinue && { opacity: 0.45 }]}><Text style={styles.onboardingCtaText}>{step === stages.length - 1 ? firstRun ? tx(draft.locale, "Показать первый образ", "Show my first look") : tx(draft.locale, "Сохранить", "Save") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
+      <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={!canContinue} onPress={() => step < stages.length - 1 ? setStep((value) => value + 1) : finish()} style={[styles.onboardingCta, !canContinue && { opacity: 0.45 }]}><Text style={styles.onboardingCtaText}>{step === stages.length - 1 ? firstRun ? tx(draft.locale, "Перейти к шкафу", "Go to my closet") : tx(draft.locale, "Сохранить", "Save") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
     </KeyboardAvoidingView>
   );
 }
@@ -1388,6 +1465,24 @@ const styles = StyleSheet.create({
   tipCard: { flexDirection: "row", gap: 10, borderRadius: 18, backgroundColor: colors.violetMist, padding: 13, marginTop: 13 },
   tipText: { flex: 1, fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary },
   addRound: { width: 45, height: 45, borderRadius: 17, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  wardrobeStartCard: { borderRadius: 26, overflow: "hidden", borderWidth: 1, borderColor: "#E2DDED", padding: 18, marginTop: 16, marginBottom: 16 },
+  wardrobeStartIcon: { width: 50, height: 50, borderRadius: 18, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", marginBottom: 15 },
+  wardrobeStartTitle: { fontFamily: typography.displaySoft, fontSize: 18, lineHeight: 23, color: colors.graphite },
+  wardrobeStartBody: { fontFamily: typography.body, fontSize: 11, lineHeight: 17, color: colors.secondary, marginTop: 8 },
+  wardrobeStartPrimary: { minHeight: 48, borderRadius: 17, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 16 },
+  wardrobeStartPrimaryText: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.paper },
+  wardrobeStartDivider: { flexDirection: "row", alignItems: "center", gap: 9, marginVertical: 13 },
+  wardrobeStartLine: { flex: 1, height: 1, backgroundColor: "#DCD6E5" },
+  wardrobeStartOr: { fontFamily: typography.bodySemibold, fontSize: 7.5, color: colors.secondary, letterSpacing: 1.1 },
+  wardrobeStartDemo: { minHeight: 61, borderRadius: 18, backgroundColor: "#FFFFFFB8", borderWidth: 1, borderColor: "#DED7F2", flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 13 },
+  wardrobeStartDemoTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  wardrobeStartDemoBody: { fontFamily: typography.body, fontSize: 8.5, lineHeight: 12.5, color: colors.secondary, marginTop: 3 },
+  demoModeBanner: { minHeight: 76, borderRadius: 20, backgroundColor: colors.violetMist, borderWidth: 1, borderColor: "#DCD3F5", flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginTop: 16 },
+  demoModeIcon: { width: 38, height: 38, borderRadius: 14, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
+  demoModeTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  demoModeBody: { fontFamily: typography.body, fontSize: 8.5, lineHeight: 12.5, color: colors.secondary, marginTop: 3 },
+  demoModeExit: { minHeight: 31, borderRadius: 12, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center", paddingHorizontal: 9 },
+  demoModeExitText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.ultraviolet },
   closetStats: { backgroundColor: colors.paper, borderRadius: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-around", paddingVertical: 16, marginTop: 18, borderWidth: 1, borderColor: colors.line },
   statValue: { fontFamily: typography.displaySoft, fontSize: 18, color: colors.graphite, textAlign: "center" },
   statLabel: { fontFamily: typography.body, fontSize: 8.5, color: colors.secondary, textAlign: "center", marginTop: 2 },
