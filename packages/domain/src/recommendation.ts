@@ -68,13 +68,25 @@ const styleSignatureScore = (items: CandidateItem[], styleId: string) => {
       const luminance = parseLuminance(color);
       return luminance <= 0.36 || luminance >= 0.64;
     })).length / items.length;
-    const silhouette = items.filter((item) => ["tshirt", "shirt", "sweater", "coat", "jacket", "trousers", "jeans", "skirt", "shoes", "boots", "bag", "headband", "scarf", "necklace", "earrings"].includes(item.category)).length / items.length;
-    const currentCodes = items.filter((item) => /полос|stripe|кардиган|cardigan|v-neck|wide|широк|свобод|мини|mini|угги|suede|замш|балет|shoulder|плечо|ободок|headband|гетр|leg warmer|золот|gold/i.test(item.name)).length / items.length;
-    const knitLayer = items.some((item) => item.slot === "mid_layer" && item.category === "sweater");
-    const currentBottom = items.some((item) => item.slot === "bottom" && /wide|широк|свобод|мини|mini/i.test(item.name));
-    const warmDetail = items.some((item) => /корич|brown|шоколад|chocolate|бордов|burgundy|золот|gold|замш|suede/i.test(item.name));
-    const noisy = items.filter((item) => /график|принт|graphic|logo/i.test(item.name)).length / items.length;
-    return clamp(exact * 0.34 + palette * 0.1 + silhouette * 0.14 + currentCodes * 0.2 + (knitLayer ? 0.12 : 0) + (currentBottom ? 0.07 : 0) + (warmDetail ? 0.07 : 0) - noisy * 0.35);
+    const silhouette = items.filter((item) => ["tshirt", "sweater", "hoodie", "jacket", "trousers", "jeans", "sneakers", "boots", "bag", "headband", "scarf", "necklace", "earrings"].includes(item.category)).length / items.length;
+    const referenceCodes = items.filter((item) => /притал|fitted|v-neck|кардиган-топ|cardigan-top|поло|polo|укороч|cropped|bootcut|кл[её]ш|flare|прям|straight|пухов|puffer|мех|fur|угги|ugg|suede|замш|retro|navy|плечо|shoulder|золот|gold/i.test(item.name)).length / items.length;
+    const fittedTop = items.some((item) => item.slot === "top" && /притал|fitted|кардиган-топ|cardigan-top|v-neck|поло|polo/i.test(item.name));
+    const referenceBottom = items.some((item) => item.slot === "bottom" && /прям|straight|bootcut|кл[её]ш|flare|спортив|sweat/i.test(item.name));
+    const referenceFootwear = items.some((item) => item.slot === "footwear" && /угги|ugg|замш|suede|retro|navy|высок|tall/i.test(item.name));
+    const referenceOuter = !items.some((item) => item.slot === "outerwear") || items.some((item) => item.slot === "outerwear" && /корот|cropped|пухов|puffer|мех|fur|притал.*блейзер|fitted.*blazer/i.test(item.name));
+    const warmDetail = items.some((item) => /корич|brown|шоколад|chocolate|бордов|burgundy|розов|pink|золот|gold|замш|suede/i.test(item.name));
+    const offReference = items.filter((item) => /оверсайз|oversized|wide|широк|тренч|trench|график|принт|graphic|logo/i.test(item.name)).length / items.length;
+    return clamp(
+      exact * 0.3 +
+      palette * 0.08 +
+      silhouette * 0.1 +
+      referenceCodes * 0.2 +
+      (fittedTop && referenceBottom ? 0.16 : 0) +
+      (referenceFootwear ? 0.08 : 0) +
+      (referenceOuter ? 0.05 : 0) +
+      (warmDetail ? 0.05 : 0) -
+      offReference * 0.42,
+    );
   }
   if (styleId === "emo") {
     const dark = items.filter(itemIsDark).length / items.length;

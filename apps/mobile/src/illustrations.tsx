@@ -1,4 +1,4 @@
-import type { GenderPresentation, HairColor, HairProfile, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
+import type { GenderPresentation, HairColor, HairProfile, HairStylePreference, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
 import { Image, StyleSheet, View } from "react-native";
 import Svg, { Circle, G, Line, Path, Rect } from "react-native-svg";
 
@@ -8,10 +8,11 @@ export type GarmentPhotoReference = { source: number; cell: GridCell; columns: n
 
 const ink = "#24212A";
 const wardrobeGrid = require("../assets/editorial/wardrobe-products-grid-v1.png");
-const stockholmGrid = require("../assets/editorial/stockholm-products-grid-v2.png");
+const stockholmGrid = require("../assets/editorial/stockholm-products-grid-v3.png");
 const accessoryGrid = require("../assets/editorial/accessory-reference-grid-v1.png");
 const stockholmAccessoryGrid = require("../assets/editorial/stockholm-accessories-grid-v1.png");
 const hairReferenceGrid = require("../assets/editorial/style-hair-reference-grid-v1.png");
+const hairStylePickerGrid = require("../assets/editorial/hair-style-picker-grid-v1.png");
 const makeupReferenceGrid = require("../assets/editorial/style-makeup-reference-grid-v1.png");
 
 function PhotoGridCrop({ source, cell, columns, rows, height, rounded = 22, inset = 0 }: { source: number; cell: GridCell; columns: number; rows: number; height: number; rounded?: number; inset?: number }) {
@@ -43,20 +44,27 @@ const productCell = (item: Garment): GridCell => {
 
 const stockholmProductCell = (item: Garment): GridCell => {
   const name = item.name.toLowerCase();
-  if (/полос|stripe/.test(name) && item.slot === "top") return { column: 0, row: 0 };
-  if (/топ|tank|ribbed/.test(name)) return { column: 2, row: 0 };
-  if (/голуб|blue|оксфорд|oxford/.test(name)) return { column: 3, row: 0 };
-  if (/v-neck|v-образ|бежев|greige/.test(name) && item.category === "sweater") return { column: 0, row: 1 };
-  if (/полос|stripe/.test(name) && item.category === "sweater") return { column: 1, row: 1 };
-  if (/кардиган|cardigan/.test(name)) return /ч[её]рн|black/.test(name) ? { column: 3, row: 3 } : /жакет|jacket|oatmeal/.test(name) ? { column: 2, row: 3 } : /тонк|fine/.test(name) ? { column: 2, row: 1 } : { column: 1, row: 0 };
+  if (/молочн.*лонгслив|ivory.*scoop/.test(name)) return { column: 0, row: 0 };
+  if (/ч[её]рн.*притал|black.*fitted/.test(name)) return { column: 1, row: 0 };
+  if (/navy.*cardigan-top|т[её]мно-син.*кардиган-топ/.test(name)) return { column: 2, row: 0 };
+  if (/сер.*v-neck|grey.*v-neck/.test(name)) return { column: 3, row: 0 };
+  if (/розов.*худи|pink.*hoodie/.test(name)) return { column: 0, row: 1 };
+  if (/кремов.*кардиган|cream.*cardigan/.test(name)) return { column: 1, row: 1 };
+  if (/поло|polo/.test(name)) return { column: 2, row: 1 };
   if (/свитшот|sweatshirt/.test(name)) return { column: 3, row: 1 };
-  if (item.category === "jeans") return /т[её]мн|dark|indigo/.test(name) ? { column: 1, row: 2 } : { column: 0, row: 2 };
-  if (item.category === "trousers") return { column: 2, row: 2 };
-  if (item.category === "skirt") return { column: 3, row: 2 };
-  if (item.category === "coat") return { column: 0, row: 3 };
-  if (item.category === "jacket") return { column: 1, row: 3 };
-  if (item.category === "boots") return /высок|tall|knee/.test(name) ? { column: 1, row: 4 } : { column: 0, row: 4 };
-  if (item.category === "shoes") return /балет|ballet/.test(name) ? { column: 2, row: 4 } : { column: 3, row: 4 };
+  if (item.category === "jeans") return /сер|grey|gray|bootcut|кл[её]ш/.test(name) ? { column: 1, row: 2 } : { column: 0, row: 2 };
+  if (item.category === "trousers") return /спорт|sweat|jog/.test(name) ? { column: 3, row: 2 } : { column: 2, row: 2 };
+  if (/розов.*пухов|pink.*puffer/.test(name)) return { column: 0, row: 3 };
+  if (/молочн.*пухов|ivory.*puffer/.test(name)) return { column: 1, row: 3 };
+  if (/шоколад.*блейзер|chocolate.*blazer/.test(name)) return { column: 2, row: 3 };
+  if (/мех|fur/.test(name)) return { column: 3, row: 3 };
+  if (item.category === "boots") return /высок|tall|knee/.test(name) ? { column: 3, row: 4 } : { column: 0, row: 4 };
+  if (item.category === "sneakers") return /сер|grey|gray|suede|замш/.test(name) ? { column: 1, row: 4 } : { column: 2, row: 4 };
+  if (/полос|stripe/.test(name) && item.slot === "top") return { column: 2, row: 0 };
+  if (/топ|tank|ribbed/.test(name)) return { column: 0, row: 0 };
+  if (/кардиган|cardigan/.test(name)) return { column: 1, row: 1 };
+  if (item.category === "jacket" || item.category === "coat") return { column: 2, row: 3 };
+  if (item.category === "shoes") return { column: 1, row: 4 };
   return productCell(item);
 };
 
@@ -153,8 +161,23 @@ const beautyCell = (kind: "hair" | "makeup", hair: HairProfile, gender: GenderPr
   const row = styleFamilyRow(styleId);
   if (kind === "makeup") return { column: (masculine ? 3 : 0) + variant, row };
   const short = hair.length === "BUZZ" || hair.length === "SHORT";
-  return { column: (short ? 0 : 3) + variant, row };
+  const selected = hair.stylePreference ?? "AUTO";
+  if (short) {
+    if (selected === "TEXTURED" || selected === "WAVES_CURLS" || selected === "BLOWOUT") return { column: 1, row };
+    if (selected === "SLEEK" || selected === "STRAIGHT" || selected === "UPDO_BRAID") return { column: 2, row };
+    return { column: variant, row };
+  }
+  if (selected === "BLOWOUT" || selected === "WAVES_CURLS" || selected === "TEXTURED") return { column: 3, row };
+  if (selected === "STRAIGHT" || selected === "SLEEK") return { column: 4, row };
+  if (selected === "UPDO_BRAID") return { column: 5, row };
+  return { column: 3 + variant, row };
 };
+
+export function HairStyleThumbnail({ gender, preference, height = 92 }: { hair: HairProfile; gender: GenderPresentation; styleId: string; preference: HairStylePreference; height?: number }) {
+  const columns: Record<HairStylePreference, number> = { AUTO: 0, TEXTURED: 1, BLOWOUT: 2, STRAIGHT: 3, WAVES_CURLS: 4, SLEEK: 5, UPDO_BRAID: 6 };
+  const row = gender === "FEMININE" ? 0 : 1;
+  return <PhotoGridCrop source={hairStylePickerGrid} cell={{ column: columns[preference], row }} columns={7} rows={2} height={height} rounded={13} inset={1} />;
+}
 
 export function BeautyReference({ kind, look, hair, gender, styleId, variantIndex, height = 148 }: { kind: "hair" | "makeup" | "accessories"; look: OutfitOption; hair: HairProfile; gender: GenderPresentation; styleId: string; recommendedColor?: HairColor; variantIndex?: number | undefined; height?: number }) {
   const identity = `${look.id}|${look.items.map((item) => item.name).join("|")}|${kind}`;

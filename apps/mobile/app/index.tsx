@@ -90,8 +90,8 @@ import {
   type FollowRequest,
   type SocialSearchAccount,
 } from "../src/api";
-import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS } from "../src/appearance";
-import { BeautyReference, GarmentIllustration, OccasionIllustration, SchoolDressCodeIllustration, garmentPhotoReference } from "../src/illustrations";
+import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS, HAIR_STYLE_OPTIONS } from "../src/appearance";
+import { BeautyReference, GarmentIllustration, HairStyleThumbnail, OccasionIllustration, SchoolDressCodeIllustration, garmentPhotoReference } from "../src/illustrations";
 import { lookSignature, rankOutfitsWithLearning, type LookFeedback } from "../src/learning";
 import { discardExpiredWebPhotos, isEphemeralWebImage, pickerImageDataUrl } from "../src/media";
 import { CHALLENGES, editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
@@ -131,7 +131,7 @@ const DEMO_WARDROBE_KEY = "mira.demo-wardrobe.v1";
 const WEATHER_LOCATION_KEY = "mira.weather-location.v1";
 const WEATHER_SNAPSHOT_KEY = "mira.weather-snapshot.v1";
 const LOOK_FEEDBACK_KEY = "mira.look-feedback.v1";
-const WARDROBE_CATALOG_VERSION = "stockholm-reference-v2";
+const WARDROBE_CATALOG_VERSION = "stockholm-reference-v3";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", guidanceComplete: false };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
@@ -570,7 +570,7 @@ export default function MiraApp() {
   useEffect(() => {
     if (!hydrated) return;
     generateFor(profile, occasion);
-  }, [hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.locale, profile.styles, wardrobe, weather?.feelsLikeC, weather?.precipitationProbability, weather?.temperatureC, weather?.windKph]);
+  }, [hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.hairProfile.stylePreference, profile.locale, profile.styles, wardrobe, weather?.feelsLikeC, weather?.precipitationProbability, weather?.temperatureC, weather?.windKph]);
 
   const askMira = async (question = aiQuestion) => {
     const normalized = question.trim();
@@ -872,6 +872,7 @@ export default function MiraApp() {
                 hasWardrobe={wardrobe.length > 0}
                 onAddPhoto={addPhoto}
                 onEnableDemo={enableDemoWardrobe}
+                onAppearance={openGuidanceSetup}
               />
             )}
             {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} demoMode={demoWardrobeEnabled} addPhoto={addPhoto} onEnableDemo={enableDemoWardrobe} onDisableDemo={disableDemoWardrobe} onUpdate={updateWardrobeItem} />}
@@ -883,6 +884,7 @@ export default function MiraApp() {
                 styleNames={selectedNames}
                 posts={posts.filter((post) => post.mine)}
                 onEdit={editProfile}
+                onAppearance={openGuidanceSetup}
                 onPlus={() => setOverlay("paywall")}
                 onDelete={removeAccount}
               />
@@ -1088,8 +1090,11 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   );
 }
 
-function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onEnableDemo }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onEnableDemo: () => void }) {
+function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onEnableDemo, onAppearance }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onEnableDemo: () => void; onAppearance: () => void }) {
   const look = outfits[activeLook];
+  const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
+  const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
+  const hairStyle = HAIR_STYLE_OPTIONS.find((option) => option.id === (profile.hairProfile.stylePreference ?? "AUTO"))?.label[locale];
   return (
     <View>
       <Text style={styles.eyebrow}>{tx(locale, "AI LOOK LAB", "AI LOOK LAB")}</Text><Text style={styles.screenTitle}>{tx(locale, "Собери настроение", "Build a mood")}</Text><Text style={styles.lead}>{tx(locale, "MIRA использует только вещи из твоего шкафа. Ты решаешь, что оставить.", "MIRA uses only your real closet. You decide what stays.")}</Text>
@@ -1098,6 +1103,11 @@ function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outf
         {([{ id: "school", label: tx(locale, "Школа", "School") }, { id: "walk", label: tx(locale, "Прогулка", "Out") }, { id: "party", label: tx(locale, "Вечеринка", "Party") }, { id: "sport", label: tx(locale, "Спорт", "Sport") }] as const).map(({ id, label }) => <Pressable key={id} onPress={() => setOccasion(id)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><OccasionIllustration occasion={id} active={occasion === id} /><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
       </ScrollView>
       <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
+      <Pressable onPress={onAppearance} style={styles.createHairCard}>
+        <View style={styles.createHairPhoto}><HairStyleThumbnail hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} preference={profile.hairProfile.stylePreference ?? "AUTO"} height={70} /></View>
+        <View style={{ flex: 1 }}><Text style={styles.createHairTitle}>{tx(locale, "Волосы и укладка", "Hair and styling")}</Text><Text numberOfLines={2} style={styles.createHairBody}>{hairLength} · {hairColor} · {hairStyle}</Text></View>
+        <View style={styles.createHairEdit}><Text style={styles.createHairEditText}>{tx(locale, "Изменить", "Edit")}</Text><ChevronRight size={15} color={colors.ultraviolet} /></View>
+      </Pressable>
       {!look && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onEnableDemo={onEnableDemo} hasSomePieces={hasWardrobe} />}
       {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} profile={profile} referenceVariant={activeLook} /></View>}
       {look && <>
@@ -1183,18 +1193,19 @@ function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, onEnableDemo, onDi
   );
 }
 
-function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onPlus, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; onEdit: () => void; onPlus: () => void; onDelete: () => void }) {
+function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onAppearance, onPlus, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; onEdit: () => void; onAppearance: () => void; onPlus: () => void; onDelete: () => void }) {
   const inspired = posts.reduce((total, post) => total + post.reactions, 0);
   const genderLabel = GENDER_OPTIONS.find((option) => option.id === profile.genderPresentation)?.label[locale];
   const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
   const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
+  const hairStyle = HAIR_STYLE_OPTIONS.find((option) => option.id === (profile.hairProfile.stylePreference ?? "AUTO"))?.label[locale];
   const schoolLabel = profile.schoolDressCode === "UNIFORM" ? tx(locale, "форма", "uniform") : profile.schoolDressCode === "WHITE_TOP" ? tx(locale, "белый верх", "white top") : tx(locale, "свободная школа", "free school style");
   return (
     <View>
       <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{profile.nickname.slice(0, 1).toUpperCase()}</Text></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль", "Edit profile")}</Text></Pressable></View>
       <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>0</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>{inspired}</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
       <View style={styles.profileStyleCard}><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.miniLabel}>MY STYLE DNA</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text><Text style={styles.profileStyleBody}>{tx(locale, "Стиль меняется вместе с тобой. Это направление, а не ярлык.", "Your style grows with you. It is a direction, not a label.")}</Text></View>
-      <Pressable onPress={onEdit} style={styles.appearanceProfileCard}><View style={styles.appearanceProfileIcon}><Sparkles size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Параметры рекомендаций", "Guidance preferences")}</Text><Text style={styles.privacyBody}>{genderLabel} · {hairLength} · {hairColor}{profile.age >= 6 ? ` · ${schoolLabel}` : ""}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
+      <Pressable onPress={onAppearance} style={styles.appearanceProfileCard}><View style={styles.appearanceProfileIcon}><Sparkles size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Внешность, волосы и укладка", "Appearance, hair and styling")}</Text><Text style={styles.privacyBody}>{genderLabel} · {hairLength} · {hairColor} · {hairStyle}{profile.age >= 6 ? ` · ${schoolLabel}` : ""}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
       <View style={styles.privacyCard}><View style={styles.privacyIcon}><LockKeyhole size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{mode === "social" ? tx(locale, "Профиль виден только твоему кругу", "Only your circle sees your profile") : tx(locale, "Закрытый возрастной режим", "Age-safe private mode")}</Text><Text style={styles.privacyBody}>{tx(locale, "Возраст не показывается. Геолокация и школа никогда не публикуются.", "Your age, school and location are never shown.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
       <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитные образы, поездки и капсулы", "Unlimited looks, trips and capsules")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
       <SectionTitle title={tx(locale, "Твои луки", "Your looks")} action={`${posts.length}`} />
@@ -1280,7 +1291,7 @@ function Onboarding({ initial, firstRun, startAt, onDone, onClose }: { initial: 
             return <Pressable key={style.id} onPress={() => toggleStyle(style.id)} style={[styles.styleChoice, selected && styles.styleChoiceActive]}><View style={styles.styleChoicePalette}>{style.palette.slice(0, 4).map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.styleChoiceName}>{style.name}</Text>{selected && <View style={styles.styleSelected}><Check size={12} color={colors.paper} /></View>}</Pressable>;
           })}</View>
         </>}
-        {stage === "appearance" && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Сделаем советы точнее", "Make guidance more precise")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Пол и параметры волос нужны для укладки и возрастных рекомендаций по макияжу. Они не показываются другим.", "Gender and hair details shape hair and age-aware makeup guidance. They are never shown to others.")}</Text><AppearanceCustomizer locale={draft.locale} gender={draft.genderPresentation} hair={draft.hairProfile} onGenderChange={(genderPresentation) => setDraft((current) => ({ ...current, genderPresentation }))} onHairChange={(hairProfile) => setDraft((current) => ({ ...current, hairProfile }))} /></>}
+        {stage === "appearance" && <><Text style={styles.onboardingTitle}>{tx(draft.locale, "Выбери волосы и укладку", "Choose your hair and styling")}</Text><Text style={styles.onboardingLead}>{tx(draft.locale, "Здесь можно выбрать пол/подачу, длину, цвет и любимый тип укладки. MIRA покажет всё на фотографиях и подстроит совет под выбранный стиль.", "Choose presentation, length, color, and your preferred styling. MIRA shows photo references and adapts them to your chosen style.")}</Text><AppearanceCustomizer locale={draft.locale} gender={draft.genderPresentation} hair={draft.hairProfile} styleId={draft.styles[0] ?? "minimal"} onGenderChange={(genderPresentation) => setDraft((current) => ({ ...current, genderPresentation }))} onHairChange={(hairProfile) => setDraft((current) => ({ ...current, hairProfile }))} /></>}
         {stage === "school" && <><Text style={styles.onboardingTitle}>{draft.age < 6 ? tx(draft.locale, "Школу настроим позже", "We’ll set up school later") : tx(draft.locale, "Как одеваются в школу?", "What is your school dress code?")}</Text><Text style={styles.onboardingLead}>{draft.age < 6 ? tx(draft.locale, "Этот вопрос появится, когда школьные образы станут актуальны.", "This choice will appear when school looks become relevant.") : tx(draft.locale, "MIRA не будет придумывать форму, если её нет. Выбери реальное правило своей школы.", "MIRA will not invent a uniform when there isn’t one. Choose your real school rule.")}</Text><SchoolPreferences locale={draft.locale} age={draft.age} value={draft.schoolDressCode} onChange={(schoolDressCode) => setDraft((current) => ({ ...current, schoolDressCode }))} /></>}
       </ScrollView>
       <View style={styles.onboardingFooter}>{step > 0 && <Pressable onPress={() => setStep((value) => value - 1)} style={styles.backRound}><ChevronLeft size={21} color={colors.graphite} /></Pressable>}<Pressable disabled={!canContinue} onPress={() => step < stages.length - 1 ? setStep((value) => value + 1) : finish()} style={[styles.onboardingCta, !canContinue && { opacity: 0.45 }]}><Text style={styles.onboardingCtaText}>{step === stages.length - 1 ? firstRun ? tx(draft.locale, "Перейти к шкафу", "Go to my closet") : tx(draft.locale, "Сохранить", "Save") : tx(draft.locale, "Продолжить", "Continue")}</Text><ChevronRight size={19} color={colors.paper} /></Pressable></View>
@@ -1288,7 +1299,8 @@ function Onboarding({ initial, firstRun, startAt, onDone, onClose }: { initial: 
   );
 }
 
-function AppearanceCustomizer({ locale, gender, hair, onGenderChange, onHairChange }: { locale: Locale; gender: GenderPresentation; hair: HairProfile; onGenderChange: (value: GenderPresentation) => void; onHairChange: (value: HairProfile) => void }) {
+function AppearanceCustomizer({ locale, gender, hair, styleId, onGenderChange, onHairChange }: { locale: Locale; gender: GenderPresentation; hair: HairProfile; styleId: string; onGenderChange: (value: GenderPresentation) => void; onHairChange: (value: HairProfile) => void }) {
+  const visibleHairStyles = HAIR_STYLE_OPTIONS.filter((option) => option.minLength.includes(hair.length));
   return <View>
     <Text style={styles.appearanceLabel}>{tx(locale, "ПОЛ / ПОДАЧА", "GENDER / PRESENTATION")}</Text>
     <View style={styles.genderGrid}>{GENDER_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onGenderChange(option.id)} style={[styles.genderCard, gender === option.id && styles.genderCardActive]}><Text style={[styles.genderSymbol, gender === option.id && styles.genderSymbolActive]}>{option.symbol}</Text><View style={{ flex: 1 }}><Text style={[styles.genderTitle, gender === option.id && styles.genderTitleActive]}>{option.label[locale]}</Text><Text style={[styles.genderBody, gender === option.id && styles.genderBodyActive]}>{option.description[locale]}</Text></View>{gender === option.id && <Check size={15} color={colors.paper} />}</Pressable>)}</View>
@@ -1296,6 +1308,16 @@ function AppearanceCustomizer({ locale, gender, hair, onGenderChange, onHairChan
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appearanceRail}>{HAIR_LENGTH_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onHairChange({ ...hair, length: option.id })} style={[styles.appearanceChoice, hair.length === option.id && styles.appearanceChoiceActive]}><Text style={[styles.appearanceChoiceText, hair.length === option.id && styles.appearanceChoiceTextActive]}>{option.label[locale]}</Text></Pressable>)}</ScrollView>
     <Text style={styles.appearanceLabel}>{tx(locale, "ЦВЕТ ВОЛОС", "HAIR COLOR")}</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appearanceRail}>{HAIR_COLOR_OPTIONS.map((option) => <Pressable key={option.id} onPress={() => onHairChange({ ...hair, color: option.id })} style={[styles.hairColorChoice, hair.color === option.id && styles.hairColorChoiceActive]}><View style={[styles.hairColorSwatch, { backgroundColor: option.color }]} /><Text style={styles.hairColorText}>{option.label[locale]}</Text>{hair.color === option.id && <Check size={12} color={colors.ultraviolet} />}</Pressable>)}</ScrollView>
+    <Text style={styles.appearanceLabel}>{tx(locale, "ЛЮБИМАЯ УКЛАДКА", "PREFERRED STYLING")}</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hairStyleRail}>{visibleHairStyles.map((option) => {
+      const selected = (hair.stylePreference ?? "AUTO") === option.id;
+      return <Pressable key={option.id} onPress={() => onHairChange({ ...hair, stylePreference: option.id })} style={[styles.hairStyleCard, selected && styles.hairStyleCardActive]}>
+        <View style={styles.hairStylePhoto}><HairStyleThumbnail hair={hair} gender={gender} styleId={styleId} preference={option.id} height={92} /></View>
+        <Text numberOfLines={1} style={styles.hairStyleTitle}>{option.label[locale]}</Text>
+        <Text numberOfLines={2} style={styles.hairStyleBody}>{option.description[locale]}</Text>
+        {selected && <View style={styles.hairStyleCheck}><Check size={12} color={colors.paper} /></View>}
+      </Pressable>;
+    })}</ScrollView>
     <View style={styles.appearancePrivacy}><LockKeyhole size={18} color={colors.ultraviolet} /><Text style={styles.appearancePrivacyText}>{tx(locale, "MIRA может подсказать другой цвет волос для выбранного стиля, но это всегда необязательная идея — не требование.", "MIRA may suggest another hair color for a style, but it is always an optional idea, never a requirement.")}</Text></View>
   </View>;
 }
@@ -1588,6 +1610,12 @@ const styles = StyleSheet.create({
   occasionLabelActive: { color: colors.paper },
   createStyleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   createStyleName: { fontFamily: typography.displaySoft, fontSize: 14, color: colors.graphite, textTransform: "capitalize" },
+  createHairCard: { minHeight: 82, borderRadius: 16, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 11, padding: 6, paddingRight: 11, marginBottom: 12 },
+  createHairPhoto: { width: 72, height: 70, borderRadius: 13, overflow: "hidden", backgroundColor: colors.violetMist },
+  createHairTitle: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite },
+  createHairBody: { fontFamily: typography.body, fontSize: 8.8, lineHeight: 13, color: colors.secondary, marginTop: 4 },
+  createHairEdit: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 2 },
+  createHairEditText: { fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.ultraviolet },
   builderCanvas: { minHeight: 430, borderRadius: 27, overflow: "hidden", padding: 15 },
   totalLookGuide: { borderRadius: 20, backgroundColor: "#FFFFFFD9", padding: 12, gap: 8 },
   totalLookGuideHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 2 },
@@ -1830,6 +1858,13 @@ const styles = StyleSheet.create({
   hairColorChoiceActive: { borderColor: colors.ultraviolet, borderWidth: 2 },
   hairColorSwatch: { width: 24, height: 24, borderRadius: 9, borderWidth: 1, borderColor: "#00000012" },
   hairColorText: { flex: 1, fontFamily: typography.bodySemibold, fontSize: 8.5, color: colors.graphite },
+  hairStyleRail: { gap: 9, paddingRight: 7 },
+  hairStyleCard: { width: 132, minHeight: 151, borderRadius: 15, overflow: "hidden", backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 5, paddingBottom: 9 },
+  hairStyleCardActive: { borderColor: colors.ultraviolet, borderWidth: 2, padding: 4, paddingBottom: 8 },
+  hairStylePhoto: { height: 92, borderRadius: 13, overflow: "hidden", backgroundColor: colors.violetMist },
+  hairStyleTitle: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.graphite, marginTop: 7, paddingHorizontal: 4 },
+  hairStyleBody: { fontFamily: typography.body, fontSize: 7.7, lineHeight: 10.5, color: colors.secondary, marginTop: 2, paddingHorizontal: 4 },
+  hairStyleCheck: { position: "absolute", right: 9, top: 9, width: 22, height: 22, borderRadius: 8, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
   appearancePrivacy: { flexDirection: "row", gap: 9, borderRadius: 16, backgroundColor: colors.violetMist, padding: 12, marginTop: 17 },
   appearancePrivacyText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 9.5, lineHeight: 14.5, color: colors.graphite },
   schoolLaterCard: { minHeight: 114, borderRadius: 22, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", padding: 22 },

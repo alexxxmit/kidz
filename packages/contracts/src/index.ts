@@ -50,13 +50,25 @@ export const HairColorSchema = z.enum([
 ]);
 export type HairColor = z.infer<typeof HairColorSchema>;
 
+export const HairStylePreferenceSchema = z.enum([
+  "AUTO",
+  "BLOWOUT",
+  "STRAIGHT",
+  "WAVES_CURLS",
+  "SLEEK",
+  "TEXTURED",
+  "UPDO_BRAID",
+]);
+export type HairStylePreference = z.infer<typeof HairStylePreferenceSchema>;
+
 export const HairProfileSchema = z.object({
   length: HairLengthSchema.default("MEDIUM"),
   color: HairColorSchema.default("DARK_BROWN"),
   openToColorAdvice: z.boolean().default(true),
+  stylePreference: HairStylePreferenceSchema.optional(),
 });
 export type HairProfile = z.infer<typeof HairProfileSchema>;
-export const DEFAULT_HAIR_PROFILE = { length: "MEDIUM", color: "DARK_BROWN", openToColorAdvice: true } as const;
+export const DEFAULT_HAIR_PROFILE = { length: "MEDIUM", color: "DARK_BROWN", openToColorAdvice: true, stylePreference: "AUTO" } as const;
 
 export const ProfileInputSchema = z.object({
   displayName: z.string().trim().min(1).max(40).default("Мой профиль"),

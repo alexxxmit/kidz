@@ -59,7 +59,7 @@ export const STYLE_DISCOVERY_OPTIONS = [
 
 export const editorialPosts = (locale: Locale): FeedPost[] => {
   const entries = [
-    { id: "stockholm", styleId: "stockholm", style: "Stockholm", caption: { ru: "Формула недели: полоска, расслабленный деним и одна тёплая кожаная деталь.", en: "Formula of the week: stripes, relaxed denim, and one warm leather detail." }, color: "#D9D1C5" },
+    { id: "stockholm", styleId: "stockholm", style: "Stockholm", caption: { ru: "Формула недели: приталенный верх, светлый или серый деним, мягкая сумка и замшевая обувь.", en: "Formula of the week: a fitted top, light or grey denim, a soft bag, and suede footwear." }, color: "#D9D1C5" },
     { id: "emo", styleId: "emo", style: "Soft emo", caption: { ru: "Тёмный образ без перегруза: графика, прямой низ и серебристый акцент.", en: "A dark look without the overload: graphics, a straight bottom, and a silver accent." }, color: "#C9C4D1" },
     { id: "coquette", styleId: "coquette", style: "Coquette", caption: { ru: "Нежный образ становится современнее, если оставить только одну романтичную деталь.", en: "A soft look feels more current when it keeps just one romantic detail." }, color: "#F2C9D6" },
   ];

@@ -3,23 +3,28 @@ import type { WardrobeItemInput } from "@kidz/contracts";
 type DemoItem = Omit<WardrobeItemInput, "profileId">;
 
 export const STARTER_WARDROBE: DemoItem[] = [
-  // Stockholm capsule based on the current teen/young-adult interpretation:
-  // soft knitwear, stripes, relaxed denim, compact skirts and warm leather details.
-  { name: "Тонкий лонгслив в синюю полоску", category: "tshirt", slot: "top", colors: ["#F3EFE5", "#1E2A43"], warmth: 1, styleIds: ["stockholm", "coastal", "parisian"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Молочный топ в рубчик", category: "tshirt", slot: "top", colors: ["#F3EFE5"], warmth: 1, styleIds: ["stockholm", "clean-girl", "minimal"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Серый кардиган-топ", category: "sweater", slot: "top", colors: ["#B7B5B0"], warmth: 1, styleIds: ["stockholm", "clean-girl", "normcore"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Серый кардиган на пуговицах", category: "sweater", slot: "mid_layer", colors: ["#B8B7B3"], warmth: 1, styleIds: ["stockholm", "clean-girl", "minimal"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Бежевый V-neck свитер", category: "sweater", slot: "mid_layer", colors: ["#C8BBA8"], warmth: 3, styleIds: ["stockholm", "coastal", "quiet-luxury"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Объёмный свитер в синюю полоску", category: "sweater", slot: "mid_layer", colors: ["#EEE8D8", "#24324C"], warmth: 3, styleIds: ["stockholm", "coastal"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Тонкий серый кардиган", category: "sweater", slot: "mid_layer", colors: ["#C3C3C0"], warmth: 1, styleIds: ["stockholm", "clean-girl"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Светло-голубые широкие джинсы", category: "jeans", slot: "bottom", colors: ["#AFC3D1"], warmth: 2, styleIds: ["stockholm", "normcore", "coastal"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Молочные свободные брюки", category: "trousers", slot: "bottom", colors: ["#EDE8DE"], warmth: 2, styleIds: ["stockholm", "minimal", "quiet-luxury"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Белая мини-юбка с кружевом", category: "skirt", slot: "bottom", colors: ["#F3EFE7"], warmth: 1, styleIds: ["stockholm", "coquette", "romantic"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Серый укороченный блейзер", category: "jacket", slot: "outerwear", colors: ["#84847F"], warmth: 2, styleIds: ["stockholm", "classic", "preppy"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Длинное графитовое пальто", category: "coat", slot: "outerwear", colors: ["#343536"], warmth: 4, styleIds: ["stockholm", "classic", "quiet-luxury"], careState: "CLEAN", fitState: "FITS" },
+  // Stockholm capsule follows the user's feminine neutral / Y2K-preppy reference:
+  // fitted tops, straight or bootcut denim, short puffers, suede footwear and polished bags.
+  { name: "Молочный приталенный лонгслив", category: "tshirt", slot: "top", colors: ["#F3EFE5"], warmth: 1, styleIds: ["stockholm", "clean-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Чёрный приталенный лонгслив", category: "tshirt", slot: "top", colors: ["#171718"], warmth: 1, styleIds: ["stockholm", "dark-feminine"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тёмно-синий кардиган-топ", category: "sweater", slot: "top", colors: ["#202C49"], warmth: 1, styleIds: ["stockholm", "preppy"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серый приталенный V-neck", category: "sweater", slot: "top", colors: ["#B7B8B6"], warmth: 2, styleIds: ["stockholm", "clean-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Пудрово-розовое худи на молнии", category: "hoodie", slot: "mid_layer", colors: ["#E8C9D0"], warmth: 2, styleIds: ["stockholm", "soft-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Кремовый приталенный кардиган", category: "sweater", slot: "mid_layer", colors: ["#EFE8D9"], warmth: 2, styleIds: ["stockholm", "clean-girl", "preppy"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Тёмно-синее трикотажное поло", category: "sweater", slot: "top", colors: ["#202C49"], warmth: 1, styleIds: ["stockholm", "preppy"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Молочный укороченный свитшот", category: "sweater", slot: "mid_layer", colors: ["#F0ECE2"], warmth: 2, styleIds: ["stockholm", "soft-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Светло-голубые прямые джинсы", category: "jeans", slot: "bottom", colors: ["#B6C8D4"], warmth: 2, styleIds: ["stockholm", "normcore"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серые джинсы bootcut", category: "jeans", slot: "bottom", colors: ["#85888A"], warmth: 2, styleIds: ["stockholm", "y2k"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Чёрные брюки клёш", category: "trousers", slot: "bottom", colors: ["#171718"], warmth: 2, styleIds: ["stockholm", "y2k", "dark-feminine"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серые прямые спортивные брюки", category: "trousers", slot: "bottom", colors: ["#C5C5C2"], warmth: 2, styleIds: ["stockholm", "sporty"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Короткий розовый пуховик", category: "jacket", slot: "outerwear", colors: ["#EBC6CF"], warmth: 4, styleIds: ["stockholm", "soft-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Короткий молочный пуховик", category: "jacket", slot: "outerwear", colors: ["#F0EBDD"], warmth: 4, styleIds: ["stockholm", "clean-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Шоколадный приталенный блейзер", category: "jacket", slot: "outerwear", colors: ["#4C3329"], warmth: 2, styleIds: ["stockholm", "preppy", "classic"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серая короткая куртка с мехом", category: "jacket", slot: "outerwear", colors: ["#A89F94"], warmth: 4, styleIds: ["stockholm", "y2k"], careState: "CLEAN", fitState: "FITS" },
   { name: "Короткие песочные угги", category: "boots", slot: "footwear", colors: ["#B58C62"], warmth: 3, styleIds: ["stockholm", "soft-girl"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Серые замшевые кроссовки", category: "sneakers", slot: "footwear", colors: ["#8A8580"], warmth: 1, styleIds: ["stockholm", "normcore"], careState: "CLEAN", fitState: "FITS" },
+  { name: "Белые кроссовки с navy-деталями", category: "sneakers", slot: "footwear", colors: ["#F1F0EB", "#24324C"], warmth: 1, styleIds: ["stockholm", "preppy"], careState: "CLEAN", fitState: "FITS" },
   { name: "Высокие чёрные сапоги", category: "boots", slot: "footwear", colors: ["#171718"], warmth: 2, styleIds: ["stockholm", "classic", "dark-feminine"], careState: "CLEAN", fitState: "FITS" },
-  { name: "Коричневые кожаные балетки", category: "shoes", slot: "footwear", colors: ["#593A2A"], warmth: 1, styleIds: ["stockholm", "balletcore", "classic"], careState: "CLEAN", fitState: "FITS" },
   { name: "Тонкий золотой кулон", category: "necklace", slot: "jewelry", colors: ["#C7A45B"], warmth: 0, styleIds: ["stockholm", "clean-girl", "classic"], careState: "CLEAN", fitState: "FITS" },
   { name: "Маленькие золотые кольца", category: "earrings", slot: "jewelry", colors: ["#C7A45B"], warmth: 0, styleIds: ["stockholm", "clean-girl", "classic"], careState: "CLEAN", fitState: "FITS" },
   { name: "Шоколадная замшевая сумка", category: "bag", slot: "bag", colors: ["#543522"], warmth: 0, styleIds: ["stockholm", "boho"], careState: "CLEAN", fitState: "FITS" },

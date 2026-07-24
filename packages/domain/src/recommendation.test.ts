@@ -39,7 +39,7 @@ describe("generateOutfits", () => {
         ageYears: 15,
         autonomyMode: "USER_DECIDES",
         genderPresentation: "NEUTRAL",
-        hairProfile: { length: "LONG", color: "BLACK", openToColorAdvice: true },
+        hairProfile: { length: "LONG", color: "BLACK", openToColorAdvice: true, stylePreference: "BLOWOUT" },
         schoolDressCode: "FREE_STYLE",
         styleMix: [{ styleId: "stockholm", weight: 1 }],
       },
@@ -54,6 +54,8 @@ describe("generateOutfits", () => {
     });
 
     expect(options[0]?.hair.title).toContain("Стокгольмский");
+    expect(options[0]?.hair.detail).toContain("объёмный blowout");
+    expect(options[0]?.hair.reasonCodes).toContain("HAIR_STYLE_SELECTED");
     expect(options[0]?.hair.colorFit).toBe("optional_shift");
     expect(options[0]?.makeup.title).toContain("Стокгольмский");
     expect(options[0]?.makeup.reasonCodes).toContain("MAKEUP_DIRECTION");

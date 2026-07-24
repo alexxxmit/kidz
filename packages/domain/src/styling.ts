@@ -3,6 +3,7 @@ import type {
   GenderPresentation,
   HairColor,
   HairLength,
+  HairStylePreference,
   HairSuggestion,
   Locale,
   MakeupSuggestion,
@@ -35,6 +36,15 @@ type StyleStylingConfig = {
 };
 
 const localized = (locale: Locale, value: LocalizedText) => value[locale];
+
+const hairPreferenceLabel: Record<Exclude<HairStylePreference, "AUTO">, LocalizedText> = {
+  BLOWOUT: { ru: "объёмный blowout", en: "a bouncy blowout" },
+  STRAIGHT: { ru: "прямую гладкую укладку", en: "a straight polished style" },
+  WAVES_CURLS: { ru: "мягкие волны или локоны", en: "soft waves or curls" },
+  SLEEK: { ru: "гладкую укладку", en: "a sleek style" },
+  TEXTURED: { ru: "естественную текстуру", en: "natural texture" },
+  UPDO_BRAID: { ru: "собранную укладку или косу", en: "an updo or braid" },
+};
 
 const hairColorLabel: Record<HairColor, LocalizedText> = {
   BLACK: { ru: "чёрный", en: "black" },
@@ -128,8 +138,8 @@ const makeupPlans: Record<string, MakeupPlan> = {
   stockholm: {
     intensity: "light",
     feminine: {
-      ru: "clean girl / сканди-минимализм: ровный тон, прозрачный гель для бровей, бальзам или нюдовый блеск",
-      en: "clean Scandinavian minimalism: even tone, clear brow gel, balm or nude gloss",
+      ru: "мягкий Stockholm glow: лёгкий тон, деликатный румянец, аккуратная тушь и розово-нюдовый блеск",
+      en: "a soft Stockholm glow: light base, delicate blush, neat mascara and pink-nude gloss",
     },
     masculine: {
       ru: "аккуратный уход, матовый бальзам и естественные брови; без видимого макияжа",
@@ -1069,6 +1079,13 @@ export const buildStylingGuidance = (
   const styleTitle = styleName(styleId, locale);
   const colorMatches = preferredColors.includes(currentColor);
   const colorAdviceAllowed = profile.hairProfile.openToColorAdvice;
+  const selectedHairStyle = profile.hairProfile.stylePreference ?? "AUTO";
+  const styleLedHair = hairText(config, profile.hairProfile.length, profile.genderPresentation, locale);
+  const hairDetail = selectedHairStyle === "AUTO"
+    ? styleLedHair
+    : locale === "ru"
+      ? `Твой выбор — ${localized(locale, hairPreferenceLabel[selectedHairStyle])}. Для «${styleTitle}» сохраним характер направления: ${styleLedHair}.`
+      : `Your choice is ${localized(locale, hairPreferenceLabel[selectedHairStyle])}. For “${styleTitle}”, keep its signature: ${styleLedHair}.`;
 
   const colorAdvice = !colorAdviceAllowed
     ? undefined
@@ -1082,11 +1099,11 @@ export const buildStylingGuidance = (
 
   const hair: HairSuggestion = {
     title: locale === "ru" ? `Причёска · ${styleTitle}` : `Hair · ${styleTitle}`,
-    detail: hairText(config, profile.hairProfile.length, profile.genderPresentation, locale),
+    detail: hairDetail,
     ...(colorAdvice ? { colorAdvice } : {}),
     recommendedColor: colorMatches || !colorAdviceAllowed ? currentColor : (preferredColors[0] ?? currentColor),
     colorFit: !colorAdviceAllowed ? "not_applicable" : colorMatches ? "already_fits" : "optional_shift",
-    reasonCodes: ["HAIR_DIRECTION", colorMatches ? "HAIR_COLOR_FITS" : "HAIR_COLOR_OPTION"],
+    reasonCodes: ["HAIR_DIRECTION", selectedHairStyle === "AUTO" ? "HAIR_STYLE_AI" : "HAIR_STYLE_SELECTED", colorMatches ? "HAIR_COLOR_FITS" : "HAIR_COLOR_OPTION"],
   };
   const makeup = buildMakeupGuidance(profile, styleId, styleTitle);
 
