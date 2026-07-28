@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode, type TryOnGarmentReference, type TryOnJob } from "@kidz/contracts";
+import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode, type TryOnGarmentReference, type TryOnJob, type WardrobeVisionResult } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { Asset } from "expo-asset";
 import { BlurView } from "expo-blur";
@@ -58,6 +58,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -94,12 +95,14 @@ import { GENDER_OPTIONS, HAIR_COLOR_OPTIONS, HAIR_LENGTH_OPTIONS, HAIR_STYLE_OPT
 import { BeautyReference, GarmentIllustration, HairStyleThumbnail, OccasionIllustration, SchoolDressCodeIllustration, garmentPhotoReference } from "../src/illustrations";
 import { lookSignature, rankOutfitsWithLearning, type LookFeedback } from "../src/learning";
 import { discardExpiredWebPhotos, isEphemeralWebImage, pickerImageDataUrl } from "../src/media";
-import { CHALLENGES, editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
+import { evaluatePurchase } from "../src/purchase-check";
+import { editorialPosts, PLUS_FEATURES, STYLE_DISCOVERY_OPTIONS, STYLE_QUESTS, TREND_STYLES, type FeedPost, wardrobePreview } from "../src/product";
+import { calculateStyleDna, styleDnaMovement, toStyleDnaSnapshot, weeklyStyleStory, type StyleDnaSnapshot } from "../src/style-dna";
 import { colors, typography } from "../src/theme";
 import { loadCurrentWeather, parseWeatherLocation, parseWeatherSnapshot, searchWeatherLocations, toWeatherContext, weatherAdvice, weatherKind, weatherLabel, type WeatherLocation, type WeatherSnapshot } from "../src/weather";
 
 type Tab = "today" | "circle" | "create" | "closet" | "me";
-type Overlay = "none" | "onboarding" | "chat" | "paywall" | "tryon" | "weather";
+type Overlay = "none" | "onboarding" | "chat" | "paywall" | "tryon" | "weather" | "publish" | "purchase-check";
 type TryOnViewState = {
   phase: "intro" | "preparing" | "queued" | "processing" | "ready" | "error";
   resultImageUrl?: string;
@@ -116,6 +119,7 @@ type ProfileState = {
   hairProfile: HairProfile;
   schoolDressCode: SchoolDressCode;
   guidanceComplete: boolean;
+  shoppingAssistantEnabled: boolean;
 };
 type WardrobeClientItem = (typeof wardrobePreview)[number] & {
   favorite?: boolean | undefined;
@@ -131,8 +135,10 @@ const DEMO_WARDROBE_KEY = "mira.demo-wardrobe.v1";
 const WEATHER_LOCATION_KEY = "mira.weather-location.v1";
 const WEATHER_SNAPSHOT_KEY = "mira.weather-snapshot.v1";
 const LOOK_FEEDBACK_KEY = "mira.look-feedback.v1";
+const STYLE_DNA_HISTORY_KEY = "mira.style-dna-history.v1";
+const QUESTS_KEY = "mira.style-quests.v1";
 const WARDROBE_CATALOG_VERSION = "stockholm-reference-v3";
-const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", guidanceComplete: false };
+const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", guidanceComplete: false, shoppingAssistantEnabled: false };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
 const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
@@ -148,6 +154,7 @@ const livePost = (post: LookPost, myHandle: string): FeedPost => ({
   caption: { ru: post.caption, en: post.caption },
   style: post.styleTags.join(" + ") || "remix",
   outfit: post.outfit,
+  photoUri: post.photoUri,
   reactions: post.reactionCount,
   comments: post.commentCount,
   remixes: post.remixCount,
@@ -250,6 +257,7 @@ export default function MiraApp() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(false);
   const [lookFeedback, setLookFeedback] = useState<LookFeedback[]>([]);
+  const [styleDnaHistory, setStyleDnaHistory] = useState<StyleDnaSnapshot[]>([]);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FollowRequest[]>([]);
   const [generated, setGenerated] = useState<OutfitOption[]>([]);
@@ -270,6 +278,12 @@ export default function MiraApp() {
   const selectedNames = catalogStyles.filter((item) => profile.styles.includes(item.id)).map((item) => item.name);
   const currentLook = generated[activeLook] ?? generated[0];
   const currentFeedback = currentLook ? lookFeedback.find((item) => item.signature === lookSignature(currentLook)) : undefined;
+  const styleDna = useMemo(
+    () => calculateStyleDna(profile.styles, wardrobe, lookFeedback, posts.filter((post) => post.mine).map((post) => post.outfit)),
+    [lookFeedback, posts, profile.styles, wardrobe],
+  );
+  const previousStyleDna = styleDnaHistory.filter((snapshot) => snapshot.month !== toStyleDnaSnapshot(styleDna).month).at(-1);
+  const weeklyStory = useMemo(() => weeklyStyleStory(lookFeedback, wardrobe), [lookFeedback, wardrobe]);
   const refreshWeather = useCallback(async (location: WeatherLocation) => {
     setWeatherLoading(true);
     setWeatherError(false);
@@ -294,7 +308,7 @@ export default function MiraApp() {
   }, [locale, profile.age, token]);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY), AsyncStorage.getItem(WEATHER_LOCATION_KEY), AsyncStorage.getItem(WEATHER_SNAPSHOT_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback, savedWeatherLocation, savedWeatherSnapshot]) => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY), AsyncStorage.getItem(WEATHER_LOCATION_KEY), AsyncStorage.getItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.getItem(STYLE_DNA_HISTORY_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback, savedWeatherLocation, savedWeatherSnapshot, savedDna]) => {
       let savedLocale: Locale = defaultProfile.locale;
       const restoreDemoWardrobe = savedDemoWardrobe === "true";
       setDemoWardrobeEnabled(restoreDemoWardrobe);
@@ -305,7 +319,7 @@ export default function MiraApp() {
         try {
           const parsed = JSON.parse(saved) as Partial<ProfileState>;
           savedLocale = parsed.locale ?? defaultProfile.locale;
-          setProfile({ ...defaultProfile, ...parsed, genderPresentation: parsed.genderPresentation ?? defaultProfile.genderPresentation, hairProfile: { ...DEFAULT_HAIR_PROFILE, ...parsed.hairProfile }, schoolDressCode: parsed.schoolDressCode ?? defaultProfile.schoolDressCode, guidanceComplete: parsed.guidanceComplete ?? false });
+          setProfile({ ...defaultProfile, ...parsed, genderPresentation: parsed.genderPresentation ?? defaultProfile.genderPresentation, hairProfile: { ...DEFAULT_HAIR_PROFILE, ...parsed.hairProfile }, schoolDressCode: parsed.schoolDressCode ?? defaultProfile.schoolDressCode, guidanceComplete: parsed.guidanceComplete ?? false, shoppingAssistantEnabled: parsed.shoppingAssistantEnabled ?? false });
         } catch { setOnboardingFirstRun(true); setOverlay("onboarding"); }
       } else {
         setOnboardingFirstRun(true);
@@ -313,6 +327,9 @@ export default function MiraApp() {
       }
       if (savedFeedback) {
         try { setLookFeedback((JSON.parse(savedFeedback) as LookFeedback[]).slice(-80)); } catch { /* Start learning from the next answer. */ }
+      }
+      if (savedDna) {
+        try { setStyleDnaHistory((JSON.parse(savedDna) as StyleDnaSnapshot[]).slice(-12)); } catch { /* A first snapshot will be created below. */ }
       }
       if (savedToken) setToken(savedToken);
       if (savedWardrobe) {
@@ -358,6 +375,16 @@ export default function MiraApp() {
   useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(LOOK_FEEDBACK_KEY, JSON.stringify(lookFeedback.slice(-80)));
   }, [hydrated, lookFeedback]);
+
+  useEffect(() => {
+    if (!hydrated || !styleDna.length) return;
+    const snapshot = toStyleDnaSnapshot(styleDna);
+    setStyleDnaHistory((current) => {
+      const next = [...current.filter((item) => item.month !== snapshot.month), snapshot].slice(-12);
+      if (JSON.stringify(next) !== JSON.stringify(current)) void AsyncStorage.setItem(STYLE_DNA_HISTORY_KEY, JSON.stringify(next));
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [hydrated, styleDna]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -540,7 +567,7 @@ export default function MiraApp() {
     generateFor(next, occasion);
   };
 
-  const generateFor = (target = profile, nextOccasion = occasion) => {
+  const generateFor = (target = profile, nextOccasion = occasion, anchorItemName?: string) => {
     const photographedWardrobe = wardrobe.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
     const recommendationWardrobe = photographedWardrobe.length ? photographedWardrobe : wardrobe;
     if (!recommendationWardrobe.length) {
@@ -561,6 +588,7 @@ export default function MiraApp() {
       },
       wardrobe: recommendationWardrobe.map(({ localId: _id, ...item }) => item),
       weather: toWeatherContext(weather, nextOccasion as "school" | "walk" | "sport" | "party" | "everyday"),
+      anchorItemName,
     });
     const favoriteNames = wardrobe.filter((item) => item.favorite).map((item) => item.name);
     setGenerated(rankOutfitsWithLearning(options, lookFeedback, favoriteNames));
@@ -678,8 +706,22 @@ export default function MiraApp() {
     setOverlay("onboarding");
   };
 
+  const setShoppingAssistantEnabled = (enabled: boolean) => {
+    const next = { ...profile, shoppingAssistantEnabled: enabled };
+    setProfile(next);
+    void AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
+    notify(enabled ? tx(locale, "«Стоит ли покупать?» включено", "Purchase check is on") : tx(locale, "Проверка покупок выключена", "Purchase check is off"));
+  };
+
   const updateWardrobeItem = (localId: string, patch: Partial<WardrobeClientItem>) => {
     setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, ...patch } : item));
+  };
+
+  const buildThreeLooksAround = (item: WardrobeClientItem) => {
+    generateFor(profile, "everyday", item.name);
+    setOccasion("everyday");
+    setTab("create");
+    notify(tx(locale, `Три образа с «${item.name}» готовы`, `Three looks with “${item.name}” are ready`));
   };
 
   const enableDemoWardrobe = () => {
@@ -694,18 +736,14 @@ export default function MiraApp() {
     notify(tx(locale, "Демо-вещи убраны", "Demo pieces removed"));
   };
 
-  const addPhoto = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.62, allowsEditing: false, base64: true });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    const localId = `photo-${Date.now()}`;
+  const processWardrobeAsset = async (asset: ImagePicker.ImagePickerAsset, position: number) => {
+    const localId = `photo-${Date.now()}-${position}-${Math.random().toString(36).slice(2, 7)}`;
     const pickerDataUrl = pickerImageDataUrl(asset);
     const durableSource = Platform.OS === "web" ? await preparePersistentWebSource(asset.uri, pickerDataUrl) : asset.uri;
     const storedSource = await persistWardrobeImage(durableSource, localId, "source").catch(() => durableSource);
     const draftItem = { name: tx(locale, "AI распознаёт вещь…", "AI is scanning this piece…"), category: "tshirt" as const, slot: "top" as const, colors: ["#808080"], warmth: 1, styleIds: profile.styles, careState: "CLEAN" as const, fitState: "FITS" as const, imageUri: storedSource, imageProcessingState: "PENDING_CUTOUT" as const, localId };
     setDemoWardrobeEnabled(false);
     setWardrobe((items) => [draftItem, ...items.filter((item) => !isDemoWardrobeItem(item))]);
-    notify(tx(locale, "Фото добавлено · AI распознаёт вещь и вырезает фон", "Photo added · AI is identifying the piece and removing its background"));
     if (asset.base64) {
       if (token) {
         const imageDataUrl = `data:${asset.mimeType ?? "image/jpeg"};base64,${asset.base64}`;
@@ -735,6 +773,21 @@ export default function MiraApp() {
     }
   };
 
+  const addPhoto = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.62,
+      allowsEditing: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 12,
+      base64: true,
+    });
+    if (result.canceled || !result.assets.length) return;
+    notify(tx(locale, `Добавляю ${result.assets.length} вещей · AI распознаёт и вырезает фон`, `Adding ${result.assets.length} pieces · AI is identifying and removing backgrounds`));
+    await Promise.allSettled(result.assets.map((asset, index) => processWardrobeAsset(asset, index)));
+    notify(tx(locale, result.assets.length === 1 ? "Вещь добавлена в шкаф" : `${result.assets.length} вещей добавлены в шкаф`, result.assets.length === 1 ? "Piece added to your closet" : `${result.assets.length} pieces added to your closet`));
+  };
+
   const toggleReaction = (postId: string) => {
     setPosts((current) => current.map((post) => post.id === postId ? { ...post, reacted: !post.reacted, reactions: post.reactions + (post.reacted ? -1 : 1) } : post));
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -745,17 +798,19 @@ export default function MiraApp() {
     }
   };
 
-  const publishCurrent = async () => {
+  const publishCurrent = async (input?: { photoDataUrl?: string; photoUri?: string; caption?: string }) => {
     if (!currentLook) return;
+    const caption = input?.caption?.trim() || tx(locale, "мой сегодняшний remix ✦", "today's remix ✦");
     const post: FeedPost = {
       id: `mine-${Date.now()}`,
       nickname: profile.nickname,
       handle: displayHandle(profile.handle),
       avatarColor: colors.ultraviolet,
       time: tx(locale, "сейчас", "now"),
-      caption: { ru: "мой сегодняшний remix ✦", en: "today's remix ✦" },
+      caption: { ru: caption, en: caption },
       style: selectedNames.join(" + "),
       outfit: currentLook,
+      photoUri: input?.photoUri,
       reactions: 0,
       comments: 0,
       remixes: 0,
@@ -767,7 +822,8 @@ export default function MiraApp() {
       try {
         const published = await publishLook(token, {
           outfit: currentLook,
-          caption: post.caption[locale],
+          ...(input?.photoDataUrl ? { photoDataUrl: input.photoDataUrl } : {}),
+          caption,
           styleTags: profile.styles,
           visibility: profile.age < 10 ? "PRIVATE" : "CIRCLE",
         });
@@ -777,13 +833,14 @@ export default function MiraApp() {
         notify(tx(locale, "Лук сохранён на устройстве · синхронизируем позже", "Look saved on device · we’ll sync it later"));
       }
     }
-    if (synced) notify(tx(locale, "Лук опубликован в твоём круге", "Look shared with your circle"));
+    if (synced) notify(input?.photoUri ? tx(locale, "Твоя фотография опубликована безопасно", "Your photo was shared safely") : tx(locale, "Лук опубликован в твоём круге", "Look shared with your circle"));
+    setOverlay("none");
     setTab("circle");
   };
 
   const removeAccount = async () => {
     if (token) await deleteAccount(token).catch(() => undefined);
-    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(WEATHER_LOCATION_KEY), AsyncStorage.removeItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), storage.deleteToken()]);
+    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(WEATHER_LOCATION_KEY), AsyncStorage.removeItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), AsyncStorage.removeItem(STYLE_DNA_HISTORY_KEY), AsyncStorage.removeItem(QUESTS_KEY), storage.deleteToken()]);
     if (Platform.OS !== "web" && wardrobeDirectory) await FileSystem.deleteAsync(wardrobeDirectory, { idempotent: true }).catch(() => undefined);
     setToken(undefined);
     setProfile(defaultProfile);
@@ -792,6 +849,7 @@ export default function MiraApp() {
     setWeatherLocation(undefined);
     setWeather(undefined);
     setLookFeedback([]);
+    setStyleDnaHistory([]);
     setPosts([]);
     setOnboardingFirstRun(true);
     setOnboardingStart("basics");
@@ -831,7 +889,7 @@ export default function MiraApp() {
                 needsGuidance={!profile.guidanceComplete}
                 onGuidance={openGuidanceSetup}
                 onCreate={() => setTab("create")}
-                onPublish={publishCurrent}
+                onPublish={() => setOverlay("publish")}
                 hasWardrobe={wardrobe.length > 0}
                 onAddPhoto={addPhoto}
                 onEnableDemo={enableDemoWardrobe}
@@ -867,7 +925,7 @@ export default function MiraApp() {
                 activeLook={activeLook}
                 setActiveLook={setActiveLook}
                 regenerate={() => generateFor()}
-                publish={publishCurrent}
+                publish={() => setOverlay("publish")}
                 tryOn={openTryOn}
                 hasWardrobe={wardrobe.length > 0}
                 onAddPhoto={addPhoto}
@@ -875,7 +933,7 @@ export default function MiraApp() {
                 onAppearance={openGuidanceSetup}
               />
             )}
-            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} demoMode={demoWardrobeEnabled} addPhoto={addPhoto} onEnableDemo={enableDemoWardrobe} onDisableDemo={disableDemoWardrobe} onUpdate={updateWardrobeItem} />}
+            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} demoMode={demoWardrobeEnabled} addPhoto={addPhoto} onEnableDemo={enableDemoWardrobe} onDisableDemo={disableDemoWardrobe} onUpdate={updateWardrobeItem} onBuildThree={buildThreeLooksAround} shoppingEnabled={profile.shoppingAssistantEnabled} onPurchaseCheck={() => setOverlay("purchase-check")} />}
             {tab === "me" && (
               <ProfileScreen
                 locale={locale}
@@ -883,9 +941,12 @@ export default function MiraApp() {
                 mode={mode}
                 styleNames={selectedNames}
                 posts={posts.filter((post) => post.mine)}
+                styleDna={styleDnaMovement(styleDna, previousStyleDna)}
+                weeklyStory={weeklyStory}
                 onEdit={editProfile}
                 onAppearance={openGuidanceSetup}
                 onPlus={() => setOverlay("paywall")}
+                onShoppingEnabled={setShoppingAssistantEnabled}
                 onDelete={removeAccount}
               />
             )}
@@ -899,6 +960,8 @@ export default function MiraApp() {
               {overlay === "paywall" && <Paywall locale={locale} onClose={() => setOverlay("none")} />}
               {overlay === "tryon" && currentLook && <TryOnScreen locale={locale} look={currentLook} state={tryOn} allowHairColorPreview={allowHairColorPreview} setAllowHairColorPreview={setAllowHairColorPreview} onStart={startTryOn} onReset={() => setTryOn({ phase: "intro" })} onClose={closeTryOn} />}
               {overlay === "weather" && <WeatherScreen locale={locale} current={weatherLocation} onSelect={selectWeatherLocation} onClose={() => setOverlay("none")} />}
+              {overlay === "publish" && currentLook && <PublishScreen locale={locale} age={profile.age} look={currentLook} onPublish={publishCurrent} onClose={() => setOverlay("none")} />}
+              {overlay === "purchase-check" && <PurchaseCheckScreen locale={locale} token={token} profile={profile} wardrobe={wardrobe} onClose={() => setOverlay("none")} />}
             </View>
           )}
         </View>
@@ -1017,8 +1080,8 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
           ] as const).map(([action, label]) => <Pressable key={action} onPress={() => onQuickAction(action)} style={styles.promptChip}><Text style={styles.promptChipText}>{label}</Text></Pressable>)}
         </ScrollView>
       </View>
-      <SectionTitle title={tx(locale, "Челлендж недели", "Weekly challenge")} action={tx(locale, "Все", "See all")} />
-      <View style={styles.challengeCard}><View style={styles.challengeIcon}><Star size={21} color={colors.graphite} /></View><View style={{ flex: 1 }}><Text style={styles.challengeTitle}>{CHALLENGES[0]!.title[locale]}</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: "66%" }]} /></View><Text style={styles.challengeMeta}>2/3 · +120 ✦</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
+      <SectionTitle title={tx(locale, "Квест недели · по желанию", "Optional weekly quest")} action={tx(locale, "Все", "See all")} />
+      <View style={styles.challengeCard}><View style={styles.challengeIcon}><Star size={21} color={colors.graphite} /></View><View style={{ flex: 1 }}><Text style={styles.challengeTitle}>{STYLE_QUESTS[0]!.title[locale]}</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: "66%" }]} /></View><Text style={styles.challengeMeta}>2/3 · +120 ✦</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
     </View>
   );
 }
@@ -1034,7 +1097,7 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
   onFollow: (accountId: string) => Promise<"ACCEPTED" | "REQUESTED">;
   onAccept: (accountId: string) => Promise<void>;
 }) {
-  const [activeFeed, setActiveFeed] = useState<"for-you" | "friends" | "challenges">("for-you");
+  const [activeFeed, setActiveFeed] = useState<"for-you" | "friends" | "quests">("for-you");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<SocialSearchAccount[]>([]);
   const [followed, setFollowed] = useState<Record<string, string>>({});
@@ -1046,6 +1109,14 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
     const timer = setTimeout(() => { void onSearch(search).then((accounts) => { if (active) setResults(accounts); }).catch(() => undefined); }, 280);
     return () => { active = false; clearTimeout(timer); };
   }, [onSearch, search]);
+  useEffect(() => {
+    void AsyncStorage.getItem(QUESTS_KEY).then((saved) => {
+      if (saved) setJoinedChallenges(JSON.parse(saved) as Record<string, boolean>);
+    }).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    void AsyncStorage.setItem(QUESTS_KEY, JSON.stringify(joinedChallenges));
+  }, [joinedChallenges]);
   if (age <= 9) return <View>
     <Text style={styles.eyebrow}>{tx(locale, "ПОДБОРКИ MIRA", "MIRA EDITS")}</Text>
     <Text style={styles.screenTitle}>{tx(locale, "Вдохновение", "Inspiration")}</Text>
@@ -1056,7 +1127,7 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
   const feedTabs = [
     { id: "for-you" as const, label: tx(locale, "Для тебя", "For you") },
     { id: "friends" as const, label: tx(locale, "Друзья", "Friends") },
-    { id: "challenges" as const, label: tx(locale, "Челленджи", "Challenges") },
+    { id: "quests" as const, label: tx(locale, "Квесты", "Quests") },
   ];
   return (
     <View>
@@ -1068,12 +1139,12 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
       {activeFeed === "for-you" && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendRail}>
         {TREND_STYLES.map((trend) => <View key={trend.id} style={styles.trendCard}><View style={styles.trendPalette}>{trend.colors.map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.trendName}>{trend.title}</Text><Text style={styles.trendChange}>{trend.change}</Text></View>)}
       </ScrollView>}
-      {activeFeed !== "challenges" && (visiblePosts.length
+      {activeFeed !== "quests" && (visiblePosts.length
         ? <View style={[styles.feedList, activeFeed === "friends" && { marginTop: 15 }]}>{visiblePosts.map((post) => <PostCard key={post.id} locale={locale} post={post} onReact={() => onReact(post.id)} onRemix={() => onRemix(post.outfit)} />)}</View>
         : <View style={styles.circleEmpty}><View style={styles.circleEmptyIcon}><UserRound size={24} color={colors.ultraviolet} /></View><Text style={styles.circleEmptyTitle}>{tx(locale, "Здесь появятся образы друзей", "Friends' looks will appear here")}</Text><Text style={styles.circleEmptyBody}>{tx(locale, "Найди человека по @ID выше и добавь его в свой круг.", "Find someone by @ID above and add them to your circle.")}</Text></View>)}
-      {activeFeed === "challenges" && <View style={styles.challengeFeed}>
-        <Text style={styles.challengeFeedLead}>{tx(locale, "Выбирай задания, собирай новые сочетания и открывай вещи, которые давно не носила.", "Pick a challenge, build new combinations, and rediscover pieces you have not worn lately.")}</Text>
-        {CHALLENGES.map((challenge, index) => { const joined = Boolean(joinedChallenges[challenge.id]); const progress = Math.round((challenge.progress / challenge.total) * 100); return <View key={challenge.id} style={styles.circleChallengeCard}><LinearGradient colors={index % 2 ? ["#231A31", "#6549D7"] : ["#F5D9A4", "#F0A9B8"]} style={StyleSheet.absoluteFill} /><View style={styles.circleChallengeTop}><View style={styles.circleChallengeIcon}><Star size={20} color={colors.graphite} /></View><Text style={[styles.circleChallengeReward, index % 2 === 1 && { color: colors.paper }]}>+{challenge.reward} ✦</Text></View><Text style={[styles.circleChallengeTitle, index % 2 === 1 && { color: colors.paper }]}>{challenge.title[locale]}</Text><View style={styles.circleChallengeProgress}><View style={[styles.circleChallengeProgressFill, { width: `${progress}%` }]} /></View><View style={styles.circleChallengeBottom}><Text style={[styles.circleChallengeMeta, index % 2 === 1 && { color: "#D9D1E7" }]}>{challenge.progress}/{challenge.total}</Text><Pressable onPress={() => setJoinedChallenges((current) => ({ ...current, [challenge.id]: !joined }))} style={[styles.circleChallengeButton, joined && styles.circleChallengeButtonActive]}><Text style={[styles.circleChallengeButtonText, joined && styles.circleChallengeButtonTextActive]}>{joined ? tx(locale, "Участвую", "Joined") : tx(locale, "Начать", "Start")}</Text></Pressable></View></View>; })}
+      {activeFeed === "quests" && <View style={styles.challengeFeed}>
+        <Text style={styles.challengeFeedLead}>{tx(locale, "Только если хочется: выбирай квест, пробуй новые сочетания и выходи в любой момент. Никаких обязательных серий.", "Only when you feel like it: pick a quest, try new combinations, and leave anytime. No mandatory streaks.")}</Text>
+        {STYLE_QUESTS.map((challenge, index) => { const joined = Boolean(joinedChallenges[challenge.id]); const progress = Math.round((challenge.progress / challenge.total) * 100); return <View key={challenge.id} style={styles.circleChallengeCard}><LinearGradient colors={index % 2 ? ["#231A31", "#6549D7"] : ["#F5D9A4", "#F0A9B8"]} style={StyleSheet.absoluteFill} /><View style={styles.circleChallengeTop}><View style={styles.circleChallengeIcon}><Star size={20} color={colors.graphite} /></View><Text style={[styles.circleChallengeReward, index % 2 === 1 && { color: colors.paper }]}>+{challenge.reward} ✦</Text></View><Text style={[styles.circleChallengeTitle, index % 2 === 1 && { color: colors.paper }]}>{challenge.title[locale]}</Text><View style={styles.circleChallengeProgress}><View style={[styles.circleChallengeProgressFill, { width: `${progress}%` }]} /></View><View style={styles.circleChallengeBottom}><Text style={[styles.circleChallengeMeta, index % 2 === 1 && { color: "#D9D1E7" }]}>{challenge.progress}/{challenge.total}</Text><Pressable onPress={() => setJoinedChallenges((current) => ({ ...current, [challenge.id]: !joined }))} style={[styles.circleChallengeButton, joined && styles.circleChallengeButtonActive]}><Text style={[styles.circleChallengeButtonText, joined && styles.circleChallengeButtonTextActive]}>{joined ? tx(locale, "Выйти", "Leave") : tx(locale, "Попробовать", "Try it")}</Text></Pressable></View></View>; })}
       </View>}
     </View>
   );
@@ -1083,7 +1154,7 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   return (
     <View style={styles.postCard}>
       <View style={styles.postHeader}><View style={[styles.avatar, { backgroundColor: post.avatarColor }]}><Text style={styles.avatarLetter}>{post.nickname.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><View style={styles.postNameRow}><Text style={styles.postName}>{post.nickname} <Text style={styles.postHandle}>{post.handle}</Text></Text>{post.editorial && <View style={styles.editorialBadge}><Sparkles size={9} color={colors.ultraviolet} /><Text style={styles.editorialBadgeText}>{tx(locale, "ПОДБОРКА", "EDIT")}</Text></View>}</View><Text style={styles.postTime}>{post.time} · {post.style}</Text></View><MoreHorizontal size={20} color={colors.secondary} /></View>
-      <View style={styles.postCanvas}><LinearGradient colors={["#F0ECFF", "#F9EDF0"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={post.outfit} /></View>
+      <View style={styles.postCanvas}>{post.photoUri ? <Image source={{ uri: post.photoUri }} style={styles.postPhoto} /> : <><LinearGradient colors={["#F0ECFF", "#F9EDF0"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={post.outfit} /></>}</View>
       <Text style={styles.postCaption}>{post.caption[locale]}</Text>
       <View style={styles.postActions}><Pressable onPress={onReact} style={styles.socialAction}><Heart size={20} color={post.reacted ? colors.coral : colors.graphite} fill={post.reacted ? colors.coral : "transparent"} /><Text style={styles.socialCount}>{post.reactions}</Text></Pressable><View style={styles.socialAction}><MessageCircle size={19} color={colors.graphite} /><Text style={styles.socialCount}>{post.comments}</Text></View><Pressable onPress={onRemix} style={styles.remixButton}><Shuffle size={15} color={colors.ultraviolet} /><Text style={styles.remixText}>{tx(locale, "Ремикс", "Remix")} · {post.remixes}</Text></Pressable></View>
     </View>
@@ -1156,8 +1227,8 @@ function WardrobeStartCard({ locale, onAddPhoto, onEnableDemo, hasSomePieces = f
     <LinearGradient colors={["#F0ECFF", "#FFF4F5", "#EDF8F7"]} style={StyleSheet.absoluteFill} />
     <View style={styles.wardrobeStartIcon}><ImagePlus size={25} color={colors.ultraviolet} /></View>
     <Text style={styles.wardrobeStartTitle}>{hasSomePieces ? tx(locale, "Добавь ещё несколько вещей", "Add a few more pieces") : tx(locale, "Начни со своих вещей", "Start with your own pieces")}</Text>
-    <Text style={styles.wardrobeStartBody}>{hasSomePieces ? tx(locale, "Для полноценного образа нужны хотя бы верх и низ или платье. Обувь и аксессуары можно добавить позже.", "A complete look needs at least a top and bottom, or a dress. Shoes and accessories can come later.") : tx(locale, "Сфотографируй одежду — AI вырежет фон, распознает вещь и будет собирать образы только из твоего шкафа.", "Photograph your clothes. AI removes the background, identifies each piece, and builds looks only from your closet.")}</Text>
-    <Pressable onPress={onAddPhoto} style={styles.wardrobeStartPrimary}><Camera size={18} color={colors.paper} /><Text style={styles.wardrobeStartPrimaryText}>{hasSomePieces ? tx(locale, "Добавить ещё вещь", "Add another piece") : tx(locale, "Добавить первую вещь", "Add my first piece")}</Text></Pressable>
+    <Text style={styles.wardrobeStartBody}>{hasSomePieces ? tx(locale, "Выбери сразу несколько фото. Для полного образа нужны хотя бы верх и низ или платье.", "Choose several photos at once. A complete look needs at least a top and bottom, or a dress.") : tx(locale, "Выбери до 12 фото сразу — AI вырежет фон, распознает каждую вещь и будет собирать образы только из твоего шкафа.", "Choose up to 12 photos at once. AI removes every background, identifies each piece, and builds looks only from your closet.")}</Text>
+    <Pressable onPress={onAddPhoto} style={styles.wardrobeStartPrimary}><Camera size={18} color={colors.paper} /><Text style={styles.wardrobeStartPrimaryText}>{hasSomePieces ? tx(locale, "Добавить несколько вещей", "Add several pieces") : tx(locale, "Быстро наполнить шкаф", "Quick closet fill")}</Text></Pressable>
     {!hasSomePieces && <>
       <View style={styles.wardrobeStartDivider}><View style={styles.wardrobeStartLine} /><Text style={styles.wardrobeStartOr}>{tx(locale, "ИЛИ", "OR")}</Text><View style={styles.wardrobeStartLine} /></View>
       <Pressable onPress={onEnableDemo} style={styles.wardrobeStartDemo}><Sparkles size={17} color={colors.ultraviolet} /><View style={{ flex: 1 }}><Text style={styles.wardrobeStartDemoTitle}>{tx(locale, "Посмотреть, как работает приложение", "See how the app works")}</Text><Text style={styles.wardrobeStartDemoBody}>{tx(locale, "Демо-гардероб появится только после нажатия", "The demo closet appears only after you choose it")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
@@ -1165,7 +1236,7 @@ function WardrobeStartCard({ locale, onAddPhoto, onEnableDemo, hasSomePieces = f
   </View>;
 }
 
-function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, onEnableDemo, onDisableDemo, onUpdate }: { locale: Locale; wardrobe: WardrobeClientItem[]; demoMode: boolean; addPhoto: () => void; onEnableDemo: () => void; onDisableDemo: () => void; onUpdate: (localId: string, patch: Partial<WardrobeClientItem>) => void }) {
+function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, onEnableDemo, onDisableDemo, onUpdate, onBuildThree, shoppingEnabled, onPurchaseCheck }: { locale: Locale; wardrobe: WardrobeClientItem[]; demoMode: boolean; addPhoto: () => void; onEnableDemo: () => void; onDisableDemo: () => void; onUpdate: (localId: string, patch: Partial<WardrobeClientItem>) => void; onBuildThree: (item: WardrobeClientItem) => void; shoppingEnabled: boolean; onPurchaseCheck: () => void }) {
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string>();
   const personalItems = wardrobe.filter((item) => !isDemoWardrobeItem(item));
@@ -1177,11 +1248,13 @@ function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, onEnableDemo, onDi
       {!wardrobe.length ? <WardrobeStartCard locale={locale} onAddPhoto={addPhoto} onEnableDemo={onEnableDemo} /> : <>
       {demoMode && <View style={styles.demoModeBanner}><View style={styles.demoModeIcon}><Sparkles size={17} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.demoModeTitle}>{tx(locale, "Сейчас включён демо-шкаф", "Demo closet is on")}</Text><Text style={styles.demoModeBody}>{tx(locale, "Это только пример. Добавь свою вещь — демо автоматически исчезнет.", "This is only a preview. Add your own piece and the demo will disappear automatically.")}</Text></View><Pressable onPress={onDisableDemo} style={styles.demoModeExit}><Text style={styles.demoModeExitText}>{tx(locale, "Убрать", "Remove")}</Text></Pressable></View>}
       <View style={styles.closetStats}><View><Text style={styles.statValue}>{wardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{demoMode ? "DEMO" : "100%"}</Text><Text style={styles.statLabel}>{demoMode ? tx(locale, "пример", "sample") : tx(locale, "твои", "yours")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{personalItems.length ? "AI" : "3"}</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
-      <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Сфотографируй вещь", "Photograph a piece")}</Text><Text style={styles.scanBody}>{tx(locale, "AI вырежет фон и заполнит карточку", "AI removes the background and fills the details")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
+      <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Быстро наполнить шкаф", "Quick closet fill")}</Text><Text style={styles.scanBody}>{tx(locale, "Выбери до 12 фото сразу · AI всё вырежет и разложит", "Choose up to 12 photos · AI cuts out and sorts every piece")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
+      {shoppingEnabled && <Pressable onPress={onPurchaseCheck} style={styles.purchaseCheckCard}><View style={styles.purchaseCheckIcon}><Search size={18} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.purchaseCheckTitle}>{tx(locale, "Стоит ли покупать?", "Should I buy it?")}</Text><Text style={styles.purchaseCheckBody}>{tx(locale, "Сфотографируй вещь в магазине — MIRA найдёт повторы и новые сочетания.", "Photograph an item in store; MIRA finds duplicates and new combinations.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>{[["all", tx(locale, "Все", "All")], ["top", tx(locale, "Верх", "Tops")], ["bottom", tx(locale, "Низ", "Bottoms")], ["footwear", tx(locale, "Обувь", "Shoes")], ["bag", tx(locale, "Сумки", "Bags")], ["jewelry", tx(locale, "Украшения", "Jewelry")]].map(([id, label]) => <Pressable key={id} onPress={() => setFilter(id!)} style={[styles.filterChip, filter === id && styles.filterChipActive]}><Text style={[styles.filterText, filter === id && styles.filterTextActive]}>{label}</Text></Pressable>)}</ScrollView>
       {selected && <View style={styles.wardrobeStatusPanel}>
         <View style={{ flex: 1 }}><Text numberOfLines={1} style={styles.wardrobeStatusTitle}>{selected.name}</Text><Text style={styles.wardrobeStatusBody}>{tx(locale, "Отметь состояние — MIRA учтёт его в следующих образах.", "Set its status and MIRA will use it in future looks.")}</Text></View>
         <View style={styles.wardrobeStatusActions}>
+          <Pressable onPress={() => onBuildThree(selected)} style={[styles.wardrobeStatusChip, styles.wardrobeStatusChipPrimary]}><Shuffle size={14} color={colors.paper} /><Text style={[styles.wardrobeStatusChipText, styles.wardrobeStatusChipTextActive]}>{tx(locale, "1 вещь · 3 образа", "1 piece · 3 looks")}</Text></Pressable>
           <Pressable onPress={() => onUpdate(selected.localId, { careState: selected.careState === "LAUNDRY" ? "CLEAN" : "LAUNDRY" })} style={[styles.wardrobeStatusChip, selected.careState === "LAUNDRY" && styles.wardrobeStatusChipActive]}><WashingMachine size={14} color={selected.careState === "LAUNDRY" ? colors.paper : colors.graphite} /><Text style={[styles.wardrobeStatusChipText, selected.careState === "LAUNDRY" && styles.wardrobeStatusChipTextActive]}>{tx(locale, "В стирке", "Laundry")}</Text></Pressable>
           <Pressable onPress={() => onUpdate(selected.localId, { favorite: !selected.favorite })} style={[styles.wardrobeStatusChip, selected.favorite && styles.wardrobeStatusChipActive]}><Heart size={14} color={selected.favorite ? colors.paper : colors.graphite} fill={selected.favorite ? colors.paper : "transparent"} /><Text style={[styles.wardrobeStatusChipText, selected.favorite && styles.wardrobeStatusChipTextActive]}>{tx(locale, "Любимая", "Favorite")}</Text></Pressable>
           <Pressable onPress={() => onUpdate(selected.localId, { usageTag: selected.usageTag === "RARE" ? undefined : "RARE" })} style={[styles.wardrobeStatusChip, selected.usageTag === "RARE" && styles.wardrobeStatusChipActive]}><RefreshCw size={14} color={selected.usageTag === "RARE" ? colors.paper : colors.graphite} /><Text style={[styles.wardrobeStatusChipText, selected.usageTag === "RARE" && styles.wardrobeStatusChipTextActive]}>{tx(locale, "Редко ношу", "Rarely worn")}</Text></Pressable>
@@ -1193,23 +1266,30 @@ function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, onEnableDemo, onDi
   );
 }
 
-function ProfileScreen({ locale, profile, mode, styleNames, posts, onEdit, onAppearance, onPlus, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; onEdit: () => void; onAppearance: () => void; onPlus: () => void; onDelete: () => void }) {
+function ProfileScreen({ locale, profile, mode, styleNames, posts, styleDna, weeklyStory, onEdit, onAppearance, onPlus, onShoppingEnabled, onDelete }: { locale: Locale; profile: ProfileState; mode: string; styleNames: string[]; posts: FeedPost[]; styleDna: Array<{ styleId: string; percent: number; change: number }>; weeklyStory: { wornLooks: number; uniquePieces: number; rediscovered: number }; onEdit: () => void; onAppearance: () => void; onPlus: () => void; onShoppingEnabled: (enabled: boolean) => void; onDelete: () => void }) {
   const inspired = posts.reduce((total, post) => total + post.reactions, 0);
   const genderLabel = GENDER_OPTIONS.find((option) => option.id === profile.genderPresentation)?.label[locale];
   const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
   const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
   const hairStyle = HAIR_STYLE_OPTIONS.find((option) => option.id === (profile.hairProfile.stylePreference ?? "AUTO"))?.label[locale];
   const schoolLabel = profile.schoolDressCode === "UNIFORM" ? tx(locale, "форма", "uniform") : profile.schoolDressCode === "WHITE_TOP" ? tx(locale, "белый верх", "white top") : tx(locale, "свободная школа", "free school style");
+  const catalog = getStyles(locale);
+  const styleName = (id: string) => catalog.find((item) => item.id === id)?.name ?? id;
+  const month = new Date().toLocaleDateString(locale === "ru" ? "ru-RU" : "en-US", { month: "long" });
+  const shareMonthly = () => Share.share({ message: tx(locale, `Мой Style DNA за ${month}: ${styleDna.map((entry) => `${styleName(entry.styleId)} ${entry.percent}%`).join(" · ")}. Создано в MIRA ✦`, `My ${month} Style DNA: ${styleDna.map((entry) => `${styleName(entry.styleId)} ${entry.percent}%`).join(" · ")}. Made with MIRA ✦`) });
+  const shareWeekly = () => Share.share({ message: tx(locale, `Моя неделя с MIRA: ${weeklyStory.wornLooks} образов, ${weeklyStory.uniquePieces} разных вещей, ${weeklyStory.rediscovered} возвращено в гардероб ✦`, `My week with MIRA: ${weeklyStory.wornLooks} looks, ${weeklyStory.uniquePieces} different pieces, ${weeklyStory.rediscovered} rediscovered ✦`) });
   return (
     <View>
       <View style={styles.profileHero}><LinearGradient colors={["#DCD4FF", "#FFDCE5", "#C9F0EF"]} style={StyleSheet.absoluteFill} /><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{profile.nickname.slice(0, 1).toUpperCase()}</Text></View><Text style={styles.profileName}>{profile.nickname}</Text><Text style={styles.profileHandle}>{displayHandle(profile.handle)}</Text><Pressable onPress={onEdit} style={styles.editProfile}><Text style={styles.editProfileText}>{tx(locale, "Изменить профиль", "Edit profile")}</Text></Pressable></View>
       <View style={styles.profileStats}><View><Text style={styles.profileStatValue}>{posts.length}</Text><Text style={styles.profileStatLabel}>{tx(locale, "луков", "looks")}</Text></View><View><Text style={styles.profileStatValue}>0</Text><Text style={styles.profileStatLabel}>{tx(locale, "в круге", "circle")}</Text></View><View><Text style={styles.profileStatValue}>{inspired}</Text><Text style={styles.profileStatLabel}>{tx(locale, "вдохновились", "inspired")}</Text></View></View>
-      <View style={styles.profileStyleCard}><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><Text style={styles.miniLabel}>MY STYLE DNA</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text><Text style={styles.profileStyleBody}>{tx(locale, "Стиль меняется вместе с тобой. Это направление, а не ярлык.", "Your style grows with you. It is a direction, not a label.")}</Text></View>
+      <View style={styles.profileStyleCard}><LinearGradient colors={["#F2EEFF", "#FFF0F4", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><View style={styles.styleStripe}>{["#CBC5BB", "#25252A", colors.coral, colors.ultraviolet].map((color) => <View key={color} style={{ flex: 1, backgroundColor: color }} />)}</View><View style={styles.dnaCardHeader}><View><Text style={styles.miniLabel}>LIVING STYLE DNA · {month.toUpperCase()}</Text><Text style={styles.profileStyleName}>{styleNames.join(" + ")}</Text></View><Pressable onPress={() => void shareMonthly()} style={styles.cardShareButton}><Send size={14} color={colors.ultraviolet} /></Pressable></View><Text style={styles.profileStyleBody}>{tx(locale, "Меняется от того, что ты реально выбираешь и носишь.", "It evolves from what you actually choose and wear.")}</Text><View style={styles.dnaBars}>{styleDna.map((entry) => <View key={entry.styleId} style={styles.dnaRow}><View style={styles.dnaRowTop}><Text style={styles.dnaName}>{styleName(entry.styleId)}</Text><Text style={styles.dnaPercent}>{entry.percent}% {entry.change === 0 ? "" : `${entry.change > 0 ? "↑" : "↓"}${Math.abs(entry.change)}`}</Text></View><View style={styles.dnaTrack}><LinearGradient colors={[colors.ultraviolet, colors.coral]} style={[styles.dnaFill, { width: `${entry.percent}%` }]} /></View></View>)}</View></View>
+      <View style={styles.weeklyStoryCard}><View style={styles.weeklyStoryTop}><View><Text style={styles.miniLabel}>{tx(locale, "ТВОЯ НЕДЕЛЯ", "YOUR WEEK")}</Text><Text style={styles.weeklyStoryTitle}>{tx(locale, "Неделя в образах", "A week in looks")}</Text></View><Pressable onPress={() => void shareWeekly()} style={styles.cardShareButton}><Send size={14} color={colors.ultraviolet} /></Pressable></View><View style={styles.weeklyStats}><View><Text style={styles.weeklyValue}>{weeklyStory.wornLooks}</Text><Text style={styles.weeklyLabel}>{tx(locale, "образов", "looks")}</Text></View><View><Text style={styles.weeklyValue}>{weeklyStory.uniquePieces}</Text><Text style={styles.weeklyLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View><Text style={styles.weeklyValue}>{weeklyStory.rediscovered}</Text><Text style={styles.weeklyLabel}>{tx(locale, "вернула", "revived")}</Text></View></View></View>
       <Pressable onPress={onAppearance} style={styles.appearanceProfileCard}><View style={styles.appearanceProfileIcon}><Sparkles size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Внешность, волосы и укладка", "Appearance, hair and styling")}</Text><Text style={styles.privacyBody}>{genderLabel} · {hairLength} · {hairColor} · {hairStyle}{profile.age >= 6 ? ` · ${schoolLabel}` : ""}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
       <View style={styles.privacyCard}><View style={styles.privacyIcon}><LockKeyhole size={19} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{mode === "social" ? tx(locale, "Профиль виден только твоему кругу", "Only your circle sees your profile") : tx(locale, "Закрытый возрастной режим", "Age-safe private mode")}</Text><Text style={styles.privacyBody}>{tx(locale, "Возраст не показывается. Геолокация и школа никогда не публикуются.", "Your age, school and location are never shown.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
-      <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитные образы, поездки и капсулы", "Unlimited looks, trips and capsules")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
+      <Pressable onPress={() => onShoppingEnabled(!profile.shoppingAssistantEnabled)} style={styles.shoppingSettingCard}><View style={styles.purchaseCheckIcon}><Search size={18} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.privacyTitle}>{tx(locale, "Стоит ли покупать?", "Should I buy it?")}</Text><Text style={styles.privacyBody}>{tx(locale, "Бесплатно. Проверяет повторы и пользу новой вещи. Можно выключить.", "Free. Checks duplicates and the value of a new piece. Optional.")}</Text></View><View style={[styles.settingToggle, profile.shoppingAssistantEnabled && styles.settingToggleActive]}><View style={[styles.settingKnob, profile.shoppingAssistantEnabled && styles.settingKnobActive]} /></View></Pressable>
+      <Pressable onPress={onPlus} style={styles.plusCard}><LinearGradient colors={["#19151F", "#34255A"]} style={StyleSheet.absoluteFill} /><Crown size={24} color={colors.warm} /><View style={{ flex: 1 }}><Text style={styles.plusTitle}>MIRA PLUS</Text><Text style={styles.plusBody}>{tx(locale, "Безлимитные образы, примерки и поездки", "Unlimited looks, try-ons and trips")}</Text></View><ChevronRight size={19} color={colors.paper} /></Pressable>
       <SectionTitle title={tx(locale, "Твои луки", "Your looks")} action={`${posts.length}`} />
-      {!posts.length ? <View style={styles.emptyLooks}><ImagePlus size={24} color={colors.secondary} /><Text style={styles.emptyLooksText}>{tx(locale, "Опубликуй первый лук — он появится здесь.", "Share your first look and it will live here.")}</Text></View> : <View style={styles.miniLooks}>{posts.map((post) => <View key={post.id} style={styles.miniLook}><OutfitCanvas look={post.outfit} /></View>)}</View>}
+      {!posts.length ? <View style={styles.emptyLooks}><ImagePlus size={24} color={colors.secondary} /><Text style={styles.emptyLooksText}>{tx(locale, "Опубликуй карточку лука или свою фотографию в нём — она появится здесь.", "Share a look card or your own photo wearing it; it will live here.")}</Text></View> : <View style={styles.miniLooks}>{posts.map((post) => <View key={post.id} style={styles.miniLook}>{post.photoUri ? <Image source={{ uri: post.photoUri }} style={styles.miniLookPhoto} /> : <OutfitCanvas look={post.outfit} />}</View>)}</View>}
       <Pressable onPress={onDelete} style={styles.deleteAccount}><Text style={styles.deleteAccountText}>{tx(locale, "Удалить аккаунт и данные", "Delete account and data")}</Text></Pressable>
     </View>
   );
@@ -1419,9 +1499,99 @@ function ChatScreen({ locale, age, token, onClose }: { locale: Locale; age: numb
   </View>;
 }
 
+function PublishScreen({ locale, age, look, onPublish, onClose }: { locale: Locale; age: number; look: OutfitOption; onPublish: (input?: { photoDataUrl?: string; photoUri?: string; caption?: string }) => Promise<void>; onClose: () => void }) {
+  const [mode, setMode] = useState<"look" | "photo">("look");
+  const [photo, setPhoto] = useState<{ uri: string; dataUrl: string }>();
+  const [caption, setCaption] = useState("");
+  const [publishing, setPublishing] = useState(false);
+
+  const choosePhoto = async () => {
+    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.62, allowsEditing: false });
+    if (picked.canceled || !picked.assets[0]) return;
+    const result = await ImageManipulator.manipulateAsync(picked.assets[0].uri, [{ resize: { width: 1000 } }], { base64: true, compress: 0.5, format: ImageManipulator.SaveFormat.JPEG });
+    if (!result.base64) return;
+    setPhoto({ uri: result.uri, dataUrl: `data:image/jpeg;base64,${result.base64}` });
+    setMode("photo");
+  };
+
+  const submit = async () => {
+    if (mode === "photo" && !photo) {
+      await choosePhoto();
+      return;
+    }
+    setPublishing(true);
+    try {
+      await onPublish({ ...(mode === "photo" && photo ? { photoDataUrl: photo.dataUrl, photoUri: photo.uri } : {}), caption });
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  return <View style={styles.fullScreen}>
+    <OverlayHeader title={tx(locale, "Новая публикация", "New post")} onClose={onClose} />
+    <ScrollView contentContainerStyle={styles.publishContent}>
+      <Text style={styles.publishTitle}>{tx(locale, "Чем хочешь поделиться?", "What do you want to share?")}</Text>
+      <Text style={styles.publishLead}>{tx(locale, "Можно выложить карточку MIRA или свою настоящую фотографию в этом образе.", "Share MIRA’s look card or your own real photo wearing it.")}</Text>
+      <View style={styles.publishModeRow}>
+        <Pressable onPress={() => setMode("look")} style={[styles.publishModeCard, mode === "look" && styles.publishModeCardActive]}><View style={styles.publishModePreview}><OutfitCanvas look={look} /></View><Text style={styles.publishModeTitle}>{tx(locale, "Карточка лука", "Look card")}</Text>{mode === "look" && <View style={styles.publishModeCheck}><Check size={12} color={colors.paper} /></View>}</Pressable>
+        <Pressable onPress={() => void choosePhoto()} style={[styles.publishModeCard, mode === "photo" && styles.publishModeCardActive]}>{photo ? <Image source={{ uri: photo.uri }} style={styles.publishPhotoPreview} /> : <View style={styles.publishPhotoEmpty}><Camera size={27} color={colors.ultraviolet} /><Text style={styles.publishPhotoEmptyText}>{tx(locale, "Выбрать фото", "Choose photo")}</Text></View>}<Text style={styles.publishModeTitle}>{tx(locale, "Моё фото в луке", "My outfit photo")}</Text>{mode === "photo" && <View style={styles.publishModeCheck}><Check size={12} color={colors.paper} /></View>}</Pressable>
+      </View>
+      <Text style={styles.fieldCaption}>{tx(locale, "ПОДПИСЬ", "CAPTION")}</Text>
+      <TextInput value={caption} onChangeText={setCaption} maxLength={500} multiline placeholder={tx(locale, "Что тебе нравится в этом образе?", "What do you like about this look?")} placeholderTextColor="#A19BAA" style={styles.publishCaption} />
+      <View style={styles.photoSafetyCard}><LockKeyhole size={16} color={colors.ultraviolet} /><Text style={styles.photoSafetyText}>{age < 13 ? tx(locale, "Для возраста до 13 лет публикация с личной фотографией сохраняется приватно.", "Personal-photo posts are private for anyone under 13.") : tx(locale, "Личная фотография видна только одобренному кругу. Город, возраст и школа не публикуются.", "Your personal photo is visible only to your approved circle. City, age, and school are never posted.")}</Text></View>
+      <Pressable onPress={() => void submit()} disabled={publishing} style={styles.publishSubmit}>{publishing ? <ActivityIndicator color={colors.paper} /> : <><Send size={17} color={colors.paper} /><Text style={styles.publishSubmitText}>{tx(locale, "Опубликовать", "Share")}</Text></>}</Pressable>
+    </ScrollView>
+  </View>;
+}
+
+function PurchaseCheckScreen({ locale, token, profile, wardrobe, onClose }: { locale: Locale; token: string | undefined; profile: ProfileState; wardrobe: WardrobeClientItem[]; onClose: () => void }) {
+  const [preview, setPreview] = useState<string>();
+  const [candidate, setCandidate] = useState<WardrobeVisionResult>();
+  const [result, setResult] = useState<ReturnType<typeof evaluatePurchase>>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const checkPhoto = async () => {
+    setError(undefined);
+    if (!token) {
+      setError(tx(locale, "Для проверки нужен интернет и подключённый аккаунт MIRA.", "Purchase check needs internet and a connected MIRA account."));
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.62, allowsEditing: false, base64: true });
+    if (picked.canceled || !picked.assets[0]) return;
+    const asset = picked.assets[0];
+    const imageDataUrl = asset.base64 ? `data:${asset.mimeType ?? "image/jpeg"};base64,${asset.base64}` : await prepareTryOnImage(asset.uri, "garment");
+    setPreview(asset.uri);
+    setLoading(true);
+    try {
+      const analysis = await analyzeWardrobePhoto(token, { ageYears: profile.age, locale, imageDataUrl, selectedStyleIds: profile.styles });
+      setCandidate(analysis);
+      setResult(evaluatePurchase(analysis, wardrobe, profile.styles));
+    } catch {
+      setError(tx(locale, "Не получилось распознать вещь. Попробуй фото на простом фоне.", "Could not identify the piece. Try a photo against a plain background."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verdictTitle = result?.verdict === "BUY" ? tx(locale, "Да, она добавит новое", "Yes, it adds something new") : result?.verdict === "SKIP" ? tx(locale, "Похоже, можно пропустить", "You can probably skip it") : tx(locale, "Стоит подумать", "Worth thinking about");
+  return <View style={styles.fullScreen}>
+    <OverlayHeader title={tx(locale, "Стоит ли покупать?", "Should I buy it?")} onClose={onClose} />
+    <ScrollView contentContainerStyle={styles.purchaseScreenContent}>
+      <View style={styles.purchaseHero}><LinearGradient colors={["#EEE9FF", "#FFF0F4", "#E8F6F4"]} style={StyleSheet.absoluteFill} /><Search size={29} color={colors.ultraviolet} /><Text style={styles.purchaseHeroTitle}>{tx(locale, "Проверка без давления", "A no-pressure check")}</Text><Text style={styles.purchaseHeroBody}>{tx(locale, "Сфотографируй вещь до покупки. MIRA сравнит её с твоим шкафом, стилем и возможными сочетаниями.", "Photograph an item before buying. MIRA compares it with your closet, style, and possible combinations.")}</Text></View>
+      {preview && <Image source={{ uri: preview }} style={styles.purchasePreview} resizeMode="contain" />}
+      {loading && <View style={styles.purchaseLoading}><ActivityIndicator color={colors.ultraviolet} /><Text style={styles.purchaseLoadingText}>{tx(locale, "Сравниваю с твоим шкафом…", "Comparing with your closet…")}</Text></View>}
+      {result && candidate && <View style={styles.purchaseResult}><Text style={styles.miniLabel}>MIRA CHECK</Text><Text style={styles.purchaseResultTitle}>{verdictTitle}</Text><Text style={styles.purchaseCandidate}>{candidate.name}</Text><View style={styles.purchaseMetrics}><View><Text style={styles.purchaseMetricValue}>+{result.newLooks}</Text><Text style={styles.purchaseMetricLabel}>{tx(locale, "новых образов", "new looks")}</Text></View><View><Text style={styles.purchaseMetricValue}>{result.similar.length}</Text><Text style={styles.purchaseMetricLabel}>{tx(locale, "похожих вещей", "similar pieces")}</Text></View></View>{result.similar.length > 0 && <Text style={styles.purchaseSimilar}>{tx(locale, "Уже похожи: ", "Already similar: ")}{result.similar.slice(0, 3).map((item) => item.name).join(", ")}</Text>}</View>}
+      {error && <Text style={styles.purchaseError}>{error}</Text>}
+      <Pressable onPress={() => void checkPhoto()} disabled={loading} style={styles.purchaseSubmit}><Camera size={18} color={colors.paper} /><Text style={styles.publishSubmitText}>{result ? tx(locale, "Проверить другую вещь", "Check another item") : tx(locale, "Сфотографировать вещь", "Photograph an item")}</Text></Pressable>
+      <Text style={styles.purchaseFine}>{tx(locale, "Функция бесплатная и ничего не покупает автоматически.", "This feature is free and never buys anything automatically.")}</Text>
+    </ScrollView>
+  </View>;
+}
+
 function Paywall({ locale, onClose }: { locale: Locale; onClose: () => void }) {
   const [yearly, setYearly] = useState(true);
-  return <View style={styles.paywall}><LinearGradient colors={["#17131D", "#30234D", "#6848E6"]} style={StyleSheet.absoluteFill} /><OverlayHeader title="" onClose={onClose} light /><ScrollView contentContainerStyle={styles.paywallContent}><View style={styles.paywallMark}><Sparkles size={28} color={colors.warm} /></View><Text style={styles.paywallEyebrow}>MIRA PLUS</Text><Text style={styles.paywallTitle}>{tx(locale, "Твой стиль. Без лимитов.", "Your style. No limits.")}</Text><Text style={styles.paywallLead}>{tx(locale, "Плати за решения, которые экономят время и помогают носить больше — не за искусственные звёздочки.", "Pay for useful decisions that save time and unlock your closet — not artificial coins.")}</Text><View style={styles.coreFreeNotice}><Check size={15} color={colors.warm} /><Text style={styles.coreFreeNoticeText}>{tx(locale, "Сумки, украшения, головные уборы, макияж и укладка остаются в бесплатной версии.", "Bags, jewelry, headwear, makeup and hairstyle guidance stay free.")}</Text></View><View style={styles.featureList}>{PLUS_FEATURES[locale].map((feature) => <View key={feature} style={styles.featureRow}><View style={styles.featureCheck}><Check size={13} color={colors.night} /></View><Text style={styles.featureText}>{feature}</Text></View>)}</View><View style={styles.billingSwitch}><Pressable onPress={() => setYearly(true)} style={[styles.billingOption, yearly && styles.billingOptionActive]}><Text style={[styles.billingText, yearly && styles.billingTextActive]}>{tx(locale, "Год", "Yearly")}</Text><Text style={styles.saveText}>−42%</Text></Pressable><Pressable onPress={() => setYearly(false)} style={[styles.billingOption, !yearly && styles.billingOptionActive]}><Text style={[styles.billingText, !yearly && styles.billingTextActive]}>{tx(locale, "Месяц", "Monthly")}</Text></Pressable></View><View style={styles.priceRow}><Text style={styles.price}>{yearly ? "$29.99" : "$4.99"}</Text><Text style={styles.pricePeriod}>/{yearly ? tx(locale, "год", "year") : tx(locale, "месяц", "month")}</Text></View><Pressable style={styles.paywallCta}><Text style={styles.paywallCtaText}>{tx(locale, "Попробовать 7 дней бесплатно", "Start 7-day free trial")}</Text><ChevronRight size={19} color={colors.night} /></Pressable><Text style={styles.paywallFine}>{tx(locale, "Отмена в любой момент. Покупка подтверждается через App Store.", "Cancel anytime. Purchase is confirmed through the App Store.")}</Text></ScrollView></View>;
+  return <View style={styles.paywall}><LinearGradient colors={["#17131D", "#30234D", "#6848E6"]} style={StyleSheet.absoluteFill} /><OverlayHeader title="" onClose={onClose} light /><ScrollView contentContainerStyle={styles.paywallContent}><View style={styles.paywallMark}><Sparkles size={28} color={colors.warm} /></View><Text style={styles.paywallEyebrow}>MIRA PLUS</Text><Text style={styles.paywallTitle}>{tx(locale, "Твой стиль. Без лимитов.", "Your style. No limits.")}</Text><Text style={styles.paywallLead}>{tx(locale, "Плати за мощность AI и экономию времени — базовый стиль не прячется за подпиской.", "Pay for more AI power and saved time; core styling never sits behind a subscription.")}</Text><View style={styles.coreFreeNotice}><Check size={15} color={colors.warm} /><Text style={styles.coreFreeNoticeText}>{tx(locale, "Бесплатно навсегда: аксессуары, макияж, укладка, быстрое наполнение шкафа, квесты, недельная история и проверка покупок.", "Always free: accessories, makeup, hair, quick closet fill, quests, weekly story, and purchase check.")}</Text></View><View style={styles.featureList}>{PLUS_FEATURES[locale].map((feature) => <View key={feature} style={styles.featureRow}><View style={styles.featureCheck}><Check size={13} color={colors.night} /></View><Text style={styles.featureText}>{feature}</Text></View>)}</View><View style={styles.billingSwitch}><Pressable onPress={() => setYearly(true)} style={[styles.billingOption, yearly && styles.billingOptionActive]}><Text style={[styles.billingText, yearly && styles.billingTextActive]}>{tx(locale, "Год", "Yearly")}</Text><Text style={styles.saveText}>−42%</Text></Pressable><Pressable onPress={() => setYearly(false)} style={[styles.billingOption, !yearly && styles.billingOptionActive]}><Text style={[styles.billingText, !yearly && styles.billingTextActive]}>{tx(locale, "Месяц", "Monthly")}</Text></Pressable></View><View style={styles.priceRow}><Text style={styles.price}>{yearly ? "$29.99" : "$4.99"}</Text><Text style={styles.pricePeriod}>/{yearly ? tx(locale, "год", "year") : tx(locale, "месяц", "month")}</Text></View><Pressable style={styles.paywallCta}><Text style={styles.paywallCtaText}>{tx(locale, "Попробовать 7 дней бесплатно", "Start 7-day free trial")}</Text><ChevronRight size={19} color={colors.night} /></Pressable><Text style={styles.paywallFine}>{tx(locale, "Отмена в любой момент. Покупка подтверждается через App Store.", "Cancel anytime. Purchase is confirmed through the App Store.")}</Text></ScrollView></View>;
 }
 
 function LockedSocial({ locale, age }: { locale: Locale; age: number }) {
@@ -1900,6 +2070,67 @@ const styles = StyleSheet.create({
   messageComposer: { minHeight: 68, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.paper },
   messageInput: { flex: 1, height: 43, borderRadius: 15, backgroundColor: colors.porcelain, paddingHorizontal: 12, fontFamily: typography.body, fontSize: 11.5, outlineStyle: "none" } as never,
   messageSend: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  postPhoto: { width: "100%", height: 340, backgroundColor: colors.violetMist },
+  purchaseCheckCard: { minHeight: 82, borderRadius: 20, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: 13, marginBottom: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  purchaseCheckIcon: { width: 38, height: 38, borderRadius: 14, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
+  purchaseCheckTitle: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.graphite },
+  purchaseCheckBody: { fontFamily: typography.body, fontSize: 9, lineHeight: 13.5, color: colors.secondary, marginTop: 3 },
+  wardrobeStatusChipPrimary: { backgroundColor: colors.ultraviolet, borderColor: colors.ultraviolet },
+  dnaCardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  cardShareButton: { width: 34, height: 34, borderRadius: 13, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  dnaBars: { gap: 10, marginTop: 15 },
+  dnaRow: { gap: 5 },
+  dnaRowTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  dnaName: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.graphite },
+  dnaPercent: { fontFamily: typography.bodySemibold, fontSize: 9, color: colors.ultraviolet },
+  dnaTrack: { height: 6, borderRadius: 3, overflow: "hidden", backgroundColor: "#E4DFEA" },
+  dnaFill: { height: "100%", borderRadius: 3 },
+  weeklyStoryCard: { borderRadius: 22, backgroundColor: colors.graphite, padding: 16, marginTop: 11 },
+  weeklyStoryTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  weeklyStoryTitle: { fontFamily: typography.displaySoft, fontSize: 18, color: colors.paper, marginTop: 4 },
+  weeklyStats: { flexDirection: "row", justifyContent: "space-between", marginTop: 18, paddingRight: 16 },
+  weeklyValue: { fontFamily: typography.display, fontSize: 24, color: colors.warm },
+  weeklyLabel: { fontFamily: typography.bodyMedium, fontSize: 8.5, color: "#C7BECE", marginTop: 2 },
+  shoppingSettingCard: { minHeight: 82, borderRadius: 20, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginTop: 11 },
+  settingToggle: { width: 43, height: 25, borderRadius: 13, backgroundColor: "#DCD8E2", padding: 3 },
+  settingToggleActive: { backgroundColor: colors.ultraviolet },
+  settingKnob: { width: 19, height: 19, borderRadius: 10, backgroundColor: colors.paper },
+  settingKnobActive: { marginLeft: 18 },
+  miniLookPhoto: { width: "100%", height: 200 },
+  publishContent: { padding: 18, paddingBottom: 40 },
+  publishTitle: { fontFamily: typography.displaySoft, fontSize: 24, lineHeight: 29, color: colors.graphite },
+  publishLead: { fontFamily: typography.body, fontSize: 11, lineHeight: 17, color: colors.secondary, marginTop: 7 },
+  publishModeRow: { flexDirection: "row", gap: 10, marginTop: 20 },
+  publishModeCard: { flex: 1, minHeight: 228, borderRadius: 20, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: 7, overflow: "hidden" },
+  publishModeCardActive: { borderColor: colors.ultraviolet, borderWidth: 2, padding: 6 },
+  publishModePreview: { height: 172, borderRadius: 15, overflow: "hidden", backgroundColor: colors.violetMist, justifyContent: "center" },
+  publishPhotoPreview: { width: "100%", height: 172, borderRadius: 15 },
+  publishPhotoEmpty: { height: 172, borderRadius: 15, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center", gap: 8 },
+  publishPhotoEmptyText: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.ultraviolet },
+  publishModeTitle: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.graphite, marginTop: 9, paddingHorizontal: 3 },
+  publishModeCheck: { position: "absolute", right: 12, top: 12, width: 23, height: 23, borderRadius: 9, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
+  publishCaption: { minHeight: 90, borderRadius: 17, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 13, textAlignVertical: "top", fontFamily: typography.body, fontSize: 11, color: colors.graphite, outlineStyle: "none" } as never,
+  photoSafetyCard: { flexDirection: "row", gap: 9, borderRadius: 16, backgroundColor: colors.violetMist, padding: 12, marginTop: 13 },
+  photoSafetyText: { flex: 1, fontFamily: typography.bodyMedium, fontSize: 9, lineHeight: 13.5, color: colors.graphite },
+  publishSubmit: { height: 53, borderRadius: 18, backgroundColor: colors.graphite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, marginTop: 16 },
+  publishSubmitText: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.paper },
+  purchaseScreenContent: { padding: 18, paddingBottom: 40 },
+  purchaseHero: { minHeight: 185, borderRadius: 25, overflow: "hidden", padding: 22, justifyContent: "flex-end" },
+  purchaseHeroTitle: { fontFamily: typography.displaySoft, fontSize: 21, color: colors.graphite, marginTop: 18 },
+  purchaseHeroBody: { fontFamily: typography.body, fontSize: 10.5, lineHeight: 16, color: colors.secondary, marginTop: 6 },
+  purchasePreview: { width: "100%", height: 240, borderRadius: 22, backgroundColor: colors.paper, marginTop: 14 },
+  purchaseLoading: { flexDirection: "row", gap: 9, alignItems: "center", justifyContent: "center", padding: 18 },
+  purchaseLoadingText: { fontFamily: typography.bodySemibold, fontSize: 10, color: colors.secondary },
+  purchaseResult: { borderRadius: 22, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 17, marginTop: 14 },
+  purchaseResultTitle: { fontFamily: typography.displaySoft, fontSize: 20, color: colors.graphite, marginTop: 5 },
+  purchaseCandidate: { fontFamily: typography.bodyMedium, fontSize: 10, color: colors.secondary, marginTop: 4 },
+  purchaseMetrics: { flexDirection: "row", gap: 38, marginTop: 18 },
+  purchaseMetricValue: { fontFamily: typography.display, fontSize: 25, color: colors.ultraviolet },
+  purchaseMetricLabel: { fontFamily: typography.bodyMedium, fontSize: 8.5, color: colors.secondary },
+  purchaseSimilar: { fontFamily: typography.body, fontSize: 9.5, lineHeight: 14, color: colors.secondary, marginTop: 15 },
+  purchaseError: { fontFamily: typography.bodyMedium, fontSize: 10, lineHeight: 15, color: colors.danger, textAlign: "center", marginTop: 14 },
+  purchaseSubmit: { height: 53, borderRadius: 18, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, marginTop: 16 },
+  purchaseFine: { fontFamily: typography.body, fontSize: 8.5, color: colors.secondary, textAlign: "center", marginTop: 9 },
   paywall: { flex: 1, backgroundColor: colors.night },
   paywallContent: { paddingHorizontal: 23, paddingBottom: 40, alignItems: "center" },
   paywallMark: { width: 65, height: 65, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF15", marginTop: 22 },

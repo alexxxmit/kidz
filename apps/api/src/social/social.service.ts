@@ -57,12 +57,18 @@ export class SocialService {
   async createPost(context: AuthContext, input: LookPostInput) {
     const moderation = await this.moderation.checkText(input.caption);
     if (!moderation.allowed) throw new BadRequestException("Публикация скрыта фильтром безопасности");
-    const visibility = context.ageYears <= 9 ? "PRIVATE" : context.ageYears <= 12 && input.visibility === "PUBLIC" ? "CIRCLE" : input.visibility;
+    const hasPersonalPhoto = Boolean(input.photoDataUrl);
+    const visibility = context.ageYears <= 9 || (hasPersonalPhoto && context.ageYears < 13)
+      ? "PRIVATE"
+      : (context.ageYears <= 12 || hasPersonalPhoto) && input.visibility === "PUBLIC"
+        ? "CIRCLE"
+        : input.visibility;
     const id = randomUUID();
     await this.database.db.insert(lookPosts).values({
       id,
       authorAccountId: context.accountId,
       outfit: input.outfit,
+      photoUri: input.photoDataUrl,
       caption: input.caption,
       styleTags: input.styleTags,
       visibility,
@@ -90,6 +96,7 @@ export class SocialService {
       .select({
         id: lookPosts.id,
         outfit: lookPosts.outfit,
+        photoUri: lookPosts.photoUri,
         caption: lookPosts.caption,
         styleTags: lookPosts.styleTags,
         visibility: lookPosts.visibility,
@@ -115,6 +122,7 @@ export class SocialService {
       posts: rows.map((row) => ({
         id: row.id,
         outfit: row.outfit,
+        ...(row.photoUri ? { photoUri: row.photoUri } : {}),
         caption: row.caption,
         styleTags: row.styleTags,
         visibility: row.visibility,

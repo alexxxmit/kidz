@@ -247,7 +247,8 @@ const combinations = (
   return result.filter((items) => {
     const hasLayer = items.some((item) => item.slot === "mid_layer" || item.slot === "outerwear");
     const hasBase = items.some((item) => item.slot === "top" || item.slot === "one_piece");
-    return !hasLayer || hasBase;
+    const hasAnchor = !request.anchorItemName || items.some((item) => item.name === request.anchorItemName);
+    return (!hasLayer || hasBase) && hasAnchor;
   });
 };
 
@@ -332,7 +333,8 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
       const repeatsLead = Boolean(lead && a.has(lead.name));
       const bottom = candidate.items.find((item) => item.slot === "bottom");
       const repeatsBottom = Boolean(bottom && a.has(bottom.name));
-      return repeatsLead || repeatsBottom || sharedCore / Math.max(core.length, 1) >= 0.66 || common / Math.max(candidate.items.length, 1) >= 0.72;
+      const anchorMode = Boolean(request.anchorItemName);
+      return (!anchorMode && (repeatsLead || repeatsBottom)) || sharedCore / Math.max(core.length, 1) >= (anchorMode ? 0.84 : 0.66) || common / Math.max(candidate.items.length, 1) >= (anchorMode ? 0.84 : 0.72);
     });
     if (!overlapsTooMuch || selected.length === 0) selected.push(candidate);
     if (selected.length === 3) break;

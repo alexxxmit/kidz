@@ -12,6 +12,7 @@ export type FeedPost = {
   caption: Record<Locale, string>;
   style: string;
   outfit: OutfitOption;
+  photoUri?: string | undefined;
   reactions: number;
   comments: number;
   remixes: number;
@@ -45,7 +46,7 @@ export const TREND_STYLES = [
   { id: "coquette", title: "Coquette", change: "+12%", colors: ["#F9DDE7", "#E9AFC3", "#FFF8FA"] },
 ];
 
-export const CHALLENGES = [
+export const STYLE_QUESTS = [
   { id: "one-piece-three", title: { ru: "1 вещь · 3 настроения", en: "1 piece · 3 moods" }, reward: 120, progress: 2, total: 3 },
   { id: "closet-first", title: { ru: "Неделя без новых покупок", en: "No-buy remix week" }, reward: 250, progress: 4, total: 7 },
 ];
@@ -80,8 +81,8 @@ export const editorialPosts = (locale: Locale): FeedPost[] => {
 };
 
 export const PLUS_FEATURES = {
-  ru: ["Безлимитные AI-подборки и новые варианты", "Планировщик поездок и готовый чемодан", "Капсулы на сезон, школу и события", "Глубокая аналитика шкафа и точный список покупок"],
-  en: ["Unlimited AI outfits and alternatives", "Trip planner and a ready-to-pack suitcase", "Season, school, and event capsules", "Deep closet analytics and a precise shopping list"],
+  ru: ["Безлимитные AI-подборки и новые варианты", "Больше AI-примерок на своих фото", "Планировщик поездок и готовый чемодан", "Расширенная история Style DNA", "Несколько профилей семьи в одном приложении"],
+  en: ["Unlimited AI outfits and alternatives", "More AI try-ons using your own photos", "Trip planner and a ready-to-pack suitcase", "Extended Style DNA history", "Multiple family profiles in one app"],
 };
 
 export const wardrobePreview = STARTER_WARDROBE.map((item, index) => ({

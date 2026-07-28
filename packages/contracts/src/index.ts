@@ -169,6 +169,7 @@ export const OutfitRequestSchema = z.object({
   wardrobe: z.array(WardrobeItemInputSchema.omit({ profileId: true })).min(1),
   weather: WeatherContextSchema,
   intent: z.string().trim().max(280).optional(),
+  anchorItemName: z.string().trim().min(1).max(160).optional(),
 });
 export type OutfitRequest = z.infer<typeof OutfitRequestSchema>;
 
@@ -295,6 +296,7 @@ export type LookVisibility = z.infer<typeof LookVisibilitySchema>;
 
 export const LookPostInputSchema = z.object({
   outfit: z.custom<OutfitOption>(),
+  photoDataUrl: z.string().max(2_500_000).refine((value) => /^data:image\/(jpeg|png|webp);base64,/i.test(value), "Invalid image data").optional(),
   caption: z.string().trim().max(500).default(""),
   styleTags: z.array(z.string().min(1).max(40)).max(8).default([]),
   visibility: LookVisibilitySchema.default("CIRCLE"),
@@ -303,8 +305,9 @@ export const LookPostInputSchema = z.object({
 });
 export type LookPostInput = z.infer<typeof LookPostInputSchema>;
 
-export type LookPost = LookPostInput & {
+export type LookPost = Omit<LookPostInput, "photoDataUrl"> & {
   id: string;
+  photoUri?: string;
   author: Pick<SocialAccount, "id" | "nickname" | "handle" | "avatarUri" | "styleMix">;
   reactionCount: number;
   commentCount: number;

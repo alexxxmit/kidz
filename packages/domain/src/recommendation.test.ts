@@ -195,4 +195,28 @@ describe("generateOutfits", () => {
     expect(options[0]?.items.some((item) => item.slot === "mid_layer" || item.slot === "outerwear")).toBe(false);
     expect(options[0]?.reasonCodes).toContain("NO_EXTRA_LAYER");
   });
+
+  it("keeps the selected closet item in all three anchored looks", () => {
+    const anchor = "Серый кардиган";
+    const options = generateOutfits({
+      profile: {
+        displayName: "Mira", locale: "ru", ageYears: 15, autonomyMode: "USER_DECIDES", genderPresentation: "FEMININE",
+        hairProfile: { length: "LONG", color: "BROWN", openToColorAdvice: true }, schoolDressCode: "FREE_STYLE", styleMix: [{ styleId: "stockholm", weight: 1 }],
+      },
+      weather: { temperatureC: 17, rainProbability: 0, windKph: 5, occasion: "everyday" },
+      anchorItemName: anchor,
+      wardrobe: [
+        { name: "Белая майка", category: "tshirt", slot: "top", colors: ["#eee"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Серый кардиган", category: "sweater", slot: "mid_layer", colors: ["#aaa"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Прямые джинсы", category: "jeans", slot: "bottom", colors: ["#789"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Белые брюки", category: "trousers", slot: "bottom", colors: ["#eee"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Балетки", category: "shoes", slot: "footwear", colors: ["#443"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Кроссовки", category: "sneakers", slot: "footwear", colors: ["#fff"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Мягкая сумка", category: "bag", slot: "bag", colors: ["#543"], warmth: 0, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+      ],
+    });
+
+    expect(options).toHaveLength(3);
+    expect(options.every((option) => option.items.some((item) => item.name === anchor))).toBe(true);
+  });
 });
