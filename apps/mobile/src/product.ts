@@ -47,8 +47,8 @@ export const TREND_STYLES = [
 ];
 
 export const STYLE_QUESTS = [
-  { id: "one-piece-three", title: { ru: "1 вещь · 3 настроения", en: "1 piece · 3 moods" }, reward: 120, progress: 2, total: 3 },
-  { id: "closet-first", title: { ru: "Неделя без новых покупок", en: "No-buy remix week" }, reward: 250, progress: 4, total: 7 },
+  { id: "one-piece-three", title: { ru: "1 вещь · 3 настроения", en: "1 piece · 3 moods" }, reward: 120 },
+  { id: "closet-first", title: { ru: "Неделя без новых покупок", en: "No-buy remix week" }, reward: 250 },
 ];
 
 export const STYLE_DISCOVERY_OPTIONS = [

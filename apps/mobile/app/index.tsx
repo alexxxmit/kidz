@@ -1081,7 +1081,7 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
         </ScrollView>
       </View>
       <SectionTitle title={tx(locale, "Квест недели · по желанию", "Optional weekly quest")} action={tx(locale, "Все", "See all")} />
-      <View style={styles.challengeCard}><View style={styles.challengeIcon}><Star size={21} color={colors.graphite} /></View><View style={{ flex: 1 }}><Text style={styles.challengeTitle}>{STYLE_QUESTS[0]!.title[locale]}</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: "66%" }]} /></View><Text style={styles.challengeMeta}>2/3 · +120 ✦</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
+      <View style={styles.challengeCard}><View style={styles.challengeIcon}><Star size={21} color={colors.graphite} /></View><View style={{ flex: 1 }}><Text style={styles.challengeTitle}>{STYLE_QUESTS[0]!.title[locale]}</Text><Text style={styles.challengeMeta}>{tx(locale, "Можно попробовать или пропустить · +120 ✦", "Try it or skip it · +120 ✦")}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
     </View>
   );
 }
@@ -1101,7 +1101,7 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<SocialSearchAccount[]>([]);
   const [followed, setFollowed] = useState<Record<string, string>>({});
-  const [joinedChallenges, setJoinedChallenges] = useState<Record<string, boolean>>({});
+  const [joinedChallenges, setJoinedChallenges] = useState<Record<string, "ACTIVE" | "DONE">>({});
   const editorial = useMemo(() => editorialPosts(locale), [locale]);
   useEffect(() => {
     if (search.trim().length < 3) { setResults([]); return; }
@@ -1111,7 +1111,7 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
   }, [onSearch, search]);
   useEffect(() => {
     void AsyncStorage.getItem(QUESTS_KEY).then((saved) => {
-      if (saved) setJoinedChallenges(JSON.parse(saved) as Record<string, boolean>);
+      if (saved) setJoinedChallenges(JSON.parse(saved) as Record<string, "ACTIVE" | "DONE">);
     }).catch(() => undefined);
   }, []);
   useEffect(() => {
@@ -1144,7 +1144,7 @@ function CircleScreen({ locale, age, posts, incomingRequests, onReact, onRemix, 
         : <View style={styles.circleEmpty}><View style={styles.circleEmptyIcon}><UserRound size={24} color={colors.ultraviolet} /></View><Text style={styles.circleEmptyTitle}>{tx(locale, "Здесь появятся образы друзей", "Friends' looks will appear here")}</Text><Text style={styles.circleEmptyBody}>{tx(locale, "Найди человека по @ID выше и добавь его в свой круг.", "Find someone by @ID above and add them to your circle.")}</Text></View>)}
       {activeFeed === "quests" && <View style={styles.challengeFeed}>
         <Text style={styles.challengeFeedLead}>{tx(locale, "Только если хочется: выбирай квест, пробуй новые сочетания и выходи в любой момент. Никаких обязательных серий.", "Only when you feel like it: pick a quest, try new combinations, and leave anytime. No mandatory streaks.")}</Text>
-        {STYLE_QUESTS.map((challenge, index) => { const joined = Boolean(joinedChallenges[challenge.id]); const progress = Math.round((challenge.progress / challenge.total) * 100); return <View key={challenge.id} style={styles.circleChallengeCard}><LinearGradient colors={index % 2 ? ["#231A31", "#6549D7"] : ["#F5D9A4", "#F0A9B8"]} style={StyleSheet.absoluteFill} /><View style={styles.circleChallengeTop}><View style={styles.circleChallengeIcon}><Star size={20} color={colors.graphite} /></View><Text style={[styles.circleChallengeReward, index % 2 === 1 && { color: colors.paper }]}>+{challenge.reward} ✦</Text></View><Text style={[styles.circleChallengeTitle, index % 2 === 1 && { color: colors.paper }]}>{challenge.title[locale]}</Text><View style={styles.circleChallengeProgress}><View style={[styles.circleChallengeProgressFill, { width: `${progress}%` }]} /></View><View style={styles.circleChallengeBottom}><Text style={[styles.circleChallengeMeta, index % 2 === 1 && { color: "#D9D1E7" }]}>{challenge.progress}/{challenge.total}</Text><Pressable onPress={() => setJoinedChallenges((current) => ({ ...current, [challenge.id]: !joined }))} style={[styles.circleChallengeButton, joined && styles.circleChallengeButtonActive]}><Text style={[styles.circleChallengeButtonText, joined && styles.circleChallengeButtonTextActive]}>{joined ? tx(locale, "Выйти", "Leave") : tx(locale, "Попробовать", "Try it")}</Text></Pressable></View></View>; })}
+        {STYLE_QUESTS.map((challenge, index) => { const state = joinedChallenges[challenge.id]; const dark = index % 2 === 1; const label = state === "DONE" ? tx(locale, "Выполнено ✓", "Completed ✓") : state === "ACTIVE" ? tx(locale, "Отметить готово", "Mark complete") : tx(locale, "Попробовать", "Try it"); const meta = state === "DONE" ? tx(locale, "Можно повторить когда захочется", "Repeat whenever you want") : state === "ACTIVE" ? tx(locale, "Без дедлайна и обязательной серии", "No deadline or required streak") : tx(locale, "Полностью по желанию", "Completely optional"); return <View key={challenge.id} style={styles.circleChallengeCard}><LinearGradient colors={dark ? ["#231A31", "#6549D7"] : ["#F5D9A4", "#F0A9B8"]} style={StyleSheet.absoluteFill} /><View style={styles.circleChallengeTop}><View style={styles.circleChallengeIcon}>{state === "DONE" ? <Check size={20} color={colors.graphite} /> : <Star size={20} color={colors.graphite} />}</View><Text style={[styles.circleChallengeReward, dark && { color: colors.paper }]}>+{challenge.reward} ✦</Text></View><Text style={[styles.circleChallengeTitle, dark && { color: colors.paper }]}>{challenge.title[locale]}</Text><View style={styles.circleChallengeBottom}><Text style={[styles.circleChallengeMeta, dark && { color: "#D9D1E7" }]}>{meta}</Text><Pressable onPress={() => setJoinedChallenges((current) => { const next = state === "ACTIVE" ? "DONE" : state === "DONE" ? undefined : "ACTIVE"; const updated = { ...current }; if (next) updated[challenge.id] = next; else delete updated[challenge.id]; return updated; })} style={[styles.circleChallengeButton, Boolean(state) && styles.circleChallengeButtonActive]}><Text style={[styles.circleChallengeButtonText, Boolean(state) && styles.circleChallengeButtonTextActive]}>{label}</Text></Pressable></View></View>; })}
       </View>}
     </View>
   );
