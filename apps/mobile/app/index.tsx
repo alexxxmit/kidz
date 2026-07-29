@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_HAIR_PROFILE, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode, type TryOnGarmentReference, type TryOnJob, type WardrobeVisionResult } from "@kidz/contracts";
+import { DEFAULT_HAIR_PROFILE, type ActivityType, type DirectMessage, type GenderPresentation, type HairProfile, type Locale, type LookPost, type OutfitOption, type SchoolDressCode, type TryOnGarmentReference, type TryOnJob, type WardrobeVisionResult, type WeatherContext } from "@kidz/contracts";
 import { generateOutfits, getStyles } from "@kidz/domain";
 import { Asset } from "expo-asset";
 import { BlurView } from "expo-blur";
@@ -102,6 +102,7 @@ import { colors, typography } from "../src/theme";
 import { loadCurrentWeather, parseWeatherLocation, parseWeatherSnapshot, searchWeatherLocations, toWeatherContext, weatherAdvice, weatherKind, weatherLabel, type WeatherLocation, type WeatherSnapshot } from "../src/weather";
 
 type Tab = "today" | "circle" | "create" | "closet" | "me";
+type Occasion = WeatherContext["occasion"];
 type Overlay = "none" | "onboarding" | "chat" | "paywall" | "tryon" | "weather" | "publish" | "purchase-check";
 type TryOnViewState = {
   phase: "intro" | "preparing" | "queued" | "processing" | "ready" | "error";
@@ -138,10 +139,28 @@ const WEATHER_SNAPSHOT_KEY = "mira.weather-snapshot.v1";
 const LOOK_FEEDBACK_KEY = "mira.look-feedback.v1";
 const STYLE_DNA_HISTORY_KEY = "mira.style-dna-history.v1";
 const QUESTS_KEY = "mira.style-quests.v1";
+const TODAY_PLAN_KEY = "mira.today-plan.v1";
 const WARDROBE_CATALOG_VERSION = "stockholm-reference-v3";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", schoolUniformDescription: "", guidanceComplete: false, shoppingAssistantEnabled: false };
 
 const tx = (locale: Locale, ru: string, en: string) => (locale === "ru" ? ru : en);
+const planLabel = (locale: Locale, occasion: Occasion, activityType: ActivityType) => {
+  if (occasion === "school") return tx(locale, "школа", "school");
+  if (occasion === "walk") return tx(locale, "прогулка", "walk");
+  if (occasion === "party") return tx(locale, "вечеринка", "party");
+  if (occasion === "sport") return tx(locale, "спорт", "sport");
+  if (occasion === "activity") {
+    const labels: Record<ActivityType, Record<Locale, string>> = {
+      sport: { ru: "спортивный кружок", en: "sports club" },
+      dance: { ru: "танцы", en: "dance class" },
+      music: { ru: "музыка", en: "music class" },
+      creative: { ru: "творческий кружок", en: "creative club" },
+      study: { ru: "дополнительные занятия", en: "extra class" },
+    };
+    return labels[activityType][locale];
+  }
+  return tx(locale, "обычный день", "everyday");
+};
 const ageMode = (age: number) => age <= 5 ? "family" : age <= 9 ? "together" : age <= 12 ? "private" : "social";
 const displayHandle = (handle: string) => `@${handle.replace(/^@/, "")}`;
 const isDemoWardrobeItem = (item: WardrobeClientItem) => item.localId.startsWith("wardrobe-");
@@ -263,7 +282,8 @@ export default function MiraApp() {
   const [incomingRequests, setIncomingRequests] = useState<FollowRequest[]>([]);
   const [generated, setGenerated] = useState<OutfitOption[]>([]);
   const [activeLook, setActiveLook] = useState(0);
-  const [occasion, setOccasion] = useState("school");
+  const [occasion, setOccasion] = useState<Occasion>("school");
+  const [activityType, setActivityType] = useState<ActivityType>("dance");
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiAnswer, setAiAnswer] = useState<string>();
   const [aiLoading, setAiLoading] = useState(false);
@@ -309,7 +329,7 @@ export default function MiraApp() {
   }, [locale, profile.age, token]);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY), AsyncStorage.getItem(WEATHER_LOCATION_KEY), AsyncStorage.getItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.getItem(STYLE_DNA_HISTORY_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback, savedWeatherLocation, savedWeatherSnapshot, savedDna]) => {
+    Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY), AsyncStorage.getItem(WEATHER_LOCATION_KEY), AsyncStorage.getItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.getItem(STYLE_DNA_HISTORY_KEY), AsyncStorage.getItem(TODAY_PLAN_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback, savedWeatherLocation, savedWeatherSnapshot, savedDna, savedPlan]) => {
       let savedLocale: Locale = defaultProfile.locale;
       const restoreDemoWardrobe = savedDemoWardrobe === "true";
       setDemoWardrobeEnabled(restoreDemoWardrobe);
@@ -332,6 +352,13 @@ export default function MiraApp() {
       }
       if (savedDna) {
         try { setStyleDnaHistory((JSON.parse(savedDna) as StyleDnaSnapshot[]).slice(-12)); } catch { /* A first snapshot will be created below. */ }
+      }
+      if (savedPlan) {
+        try {
+          const parsed = JSON.parse(savedPlan) as { occasion?: Occasion; activityType?: ActivityType };
+          if (parsed.occasion && ["school", "walk", "sport", "party", "activity", "everyday"].includes(parsed.occasion)) setOccasion(parsed.occasion);
+          if (parsed.activityType && ["sport", "dance", "music", "creative", "study"].includes(parsed.activityType)) setActivityType(parsed.activityType);
+        } catch { /* Keep the safe defaults. */ }
       }
       if (savedToken) setToken(savedToken);
       if (savedWardrobe) {
@@ -366,6 +393,10 @@ export default function MiraApp() {
   useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(DEMO_WARDROBE_KEY, String(demoWardrobeEnabled));
   }, [demoWardrobeEnabled, hydrated]);
+
+  useEffect(() => {
+    if (hydrated) void AsyncStorage.setItem(TODAY_PLAN_KEY, JSON.stringify({ occasion, activityType }));
+  }, [activityType, hydrated, occasion]);
 
   useEffect(() => {
     if (!hydrated || !weatherLocation) return;
@@ -571,7 +602,7 @@ export default function MiraApp() {
     generateFor(next, occasion);
   };
 
-  const generateFor = (target = profile, nextOccasion = occasion, anchorItemName?: string) => {
+  const generateFor = (target = profile, nextOccasion: Occasion = occasion, anchorItemName?: string, nextActivityType: ActivityType = activityType) => {
     const photographedWardrobe = wardrobe.filter((item) => Boolean(item.imageUri || item.cutoutUri || item.localId.startsWith("photo-")));
     const recommendationWardrobe = photographedWardrobe.length ? photographedWardrobe : wardrobe;
     if (!recommendationWardrobe.length) {
@@ -592,7 +623,7 @@ export default function MiraApp() {
         styleMix: target.styles.map((styleId) => ({ styleId, weight: 1 / target.styles.length })),
       },
       wardrobe: recommendationWardrobe.map(({ localId: _id, ...item }) => item),
-      weather: toWeatherContext(weather, nextOccasion as "school" | "walk" | "sport" | "party" | "everyday"),
+      weather: toWeatherContext(weather, nextOccasion, nextActivityType),
       anchorItemName,
     });
     const favoriteNames = wardrobe.filter((item) => item.favorite).map((item) => item.name);
@@ -603,7 +634,7 @@ export default function MiraApp() {
   useEffect(() => {
     if (!hydrated) return;
     generateFor(profile, occasion);
-  }, [hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.hairProfile.stylePreference, profile.locale, profile.styles, wardrobe, weather?.feelsLikeC, weather?.precipitationProbability, weather?.temperatureC, weather?.windKph]);
+  }, [activityType, hydrated, occasion, profile.age, profile.genderPresentation, profile.hairProfile.color, profile.hairProfile.length, profile.hairProfile.openToColorAdvice, profile.hairProfile.stylePreference, profile.locale, profile.styles, wardrobe, weather?.feelsLikeC, weather?.precipitationProbability, weather?.temperatureC, weather?.windKph]);
 
   const askMira = async (question = aiQuestion) => {
     const normalized = question.trim();
@@ -652,10 +683,19 @@ export default function MiraApp() {
       notify(tx(locale, "Обновляю погоду — образ появится сразу после", "Updating weather — your look will be ready right after"));
       return;
     }
-    setOccasion("everyday");
-    generateFor(profile, "everyday");
+    generateFor(profile, occasion, undefined, activityType);
     scrollRef.current?.scrollTo({ y: 110, animated: true });
-    notify(tx(locale, "Образ на сегодня готов", "Today's look is ready"));
+    notify(tx(locale, `Образ для «${planLabel(locale, occasion, activityType)}» готов`, `Your ${planLabel(locale, occasion, activityType)} look is ready`));
+  };
+
+  const selectOccasion = (value: Occasion) => {
+    setOccasion(value);
+    generateFor(profile, value, undefined, activityType);
+  };
+
+  const selectActivityType = (value: ActivityType) => {
+    setActivityType(value);
+    if (occasion === "activity") generateFor(profile, "activity", undefined, value);
   };
 
   const runAiQuickAction = (action: "alternative" | "school" | "closet") => {
@@ -908,6 +948,10 @@ export default function MiraApp() {
                 askMira={askMira}
                 onQuickAction={runAiQuickAction}
                 onChooseToday={chooseToday}
+                occasion={occasion}
+                activityType={activityType}
+                onOccasionChange={selectOccasion}
+                onActivityTypeChange={selectActivityType}
                 onFeedback={recordFeedback}
                 feedback={currentFeedback?.worn}
                 needsGuidance={!profile.guidanceComplete}
@@ -945,7 +989,9 @@ export default function MiraApp() {
                 profile={profile}
                 styleNames={selectedNames}
                 occasion={occasion}
-                setOccasion={(value) => { setOccasion(value); generateFor(profile, value); }}
+                activityType={activityType}
+                setOccasion={selectOccasion}
+                setActivityType={selectActivityType}
                 outfits={generated}
                 activeLook={activeLook}
                 setActiveLook={setActiveLook}
@@ -1019,7 +1065,33 @@ function WeatherGlyph({ snapshot, size = 19, color = colors.graphite }: { snapsh
   return <Sun size={size} color={color} />;
 }
 
-function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onTakePhoto, onEnableDemo, weatherLocation, weather, weatherLoading, weatherError, onWeather, onRefreshWeather }: {
+function DestinationPicker({ locale, occasion, activityType, onOccasionChange, onActivityTypeChange, surface = false }: { locale: Locale; occasion: Occasion; activityType: ActivityType; onOccasionChange: (value: Occasion) => void; onActivityTypeChange: (value: ActivityType) => void; surface?: boolean }) {
+  const destinations: Array<{ id: "school" | "walk" | "party" | "activity"; label: string }> = [
+    { id: "school", label: tx(locale, "Школа", "School") },
+    { id: "walk", label: tx(locale, "Прогулка", "Walk") },
+    { id: "party", label: tx(locale, "Вечеринка", "Party") },
+    { id: "activity", label: tx(locale, "Кружок", "Club") },
+  ];
+  const activityTypes: Array<{ id: ActivityType; label: string }> = [
+    { id: "sport", label: tx(locale, "Спорт", "Sport") },
+    { id: "dance", label: tx(locale, "Танцы", "Dance") },
+    { id: "music", label: tx(locale, "Музыка", "Music") },
+    { id: "creative", label: tx(locale, "Творчество", "Creative") },
+    { id: "study", label: tx(locale, "Занятия", "Classes") },
+  ];
+  return <View style={surface ? styles.destinationSurface : undefined}>
+    <View style={styles.destinationHeading}><View><Text style={styles.fieldCaption}>{tx(locale, "КУДА ТЫ СЕГОДНЯ?", "WHERE ARE YOU GOING?")}</Text><Text style={styles.destinationSummary}>{planLabel(locale, occasion, activityType)}</Text></View><MapPin size={18} color={colors.ultraviolet} /></View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionRail}>
+      {destinations.map(({ id, label }) => {
+        const active = occasion === id || (id === "activity" && occasion === "sport");
+        return <Pressable accessibilityRole="button" accessibilityState={{ selected: active }} key={id} onPress={() => onOccasionChange(id)} style={[styles.occasionCard, active && styles.occasionCardActive]}><OccasionIllustration occasion={id} active={active} /><Text style={[styles.occasionLabel, active && styles.occasionLabelActive]}>{label}</Text></Pressable>;
+      })}
+    </ScrollView>
+    {(occasion === "activity" || occasion === "sport") && <View style={styles.activityTypePanel}><Text style={styles.activityTypeTitle}>{tx(locale, "КАКОЙ КРУЖОК?", "WHAT KIND OF CLUB?")}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activityTypeRail}>{activityTypes.map((item) => <Pressable accessibilityRole="button" accessibilityState={{ selected: activityType === item.id }} key={item.id} onPress={() => onActivityTypeChange(item.id)} style={[styles.activityTypeChip, activityType === item.id && styles.activityTypeChipActive]}><Text style={[styles.activityTypeText, activityType === item.id && styles.activityTypeTextActive]}>{item.label}</Text></Pressable>)}</ScrollView><Text style={styles.activityTypeHint}>{activityType === "sport" || activityType === "dance" ? tx(locale, "Учту свободу движения, удобную обувь и сумку для формы.", "I’ll prioritize movement, practical shoes, and a kit bag.") : activityType === "creative" ? tx(locale, "Подберу удобный образ, в котором не страшно испачкать рукава.", "I’ll choose a comfortable look with practical sleeves.") : tx(locale, "Соберу аккуратный и удобный образ на несколько часов.", "I’ll build a neat, comfortable look for a few hours.")}</Text></View>}
+  </View>;
+}
+
+function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, occasion, activityType, onOccasionChange, onActivityTypeChange, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onTakePhoto, onEnableDemo, weatherLocation, weather, weatherLoading, weatherError, onWeather, onRefreshWeather }: {
   locale: Locale;
   profile: ProfileState;
   mode: string;
@@ -1032,6 +1104,10 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
   askMira: (q?: string) => void;
   onQuickAction: (action: "alternative" | "school" | "closet") => void;
   onChooseToday: () => void;
+  occasion: Occasion;
+  activityType: ActivityType;
+  onOccasionChange: (value: Occasion) => void;
+  onActivityTypeChange: (value: ActivityType) => void;
   onFeedback: (worn: boolean) => void;
   feedback: boolean | undefined;
   needsGuidance: boolean;
@@ -1059,10 +1135,11 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
       </View>
       <Pressable onPress={onChooseToday} accessibilityRole="button" style={({ pressed }) => [styles.todayDecision, pressed && { transform: [{ scale: 0.985 }] }]}>
         <LinearGradient colors={["#17131D", "#3A2868", "#6C4BFF"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-        <View style={styles.todayDecisionTop}><View style={styles.todayDecisionMark}><WandSparkles size={21} color={colors.graphite} /></View><Text style={styles.todayDecisionMeta}>{weatherLocation ? weather ? `${roundedTemperature}° · ${weatherLocation.name.toUpperCase()}` : tx(locale, `${weatherLocation.name.toUpperCase()} · ОБНОВЛЯЮ`, `${weatherLocation.name.toUpperCase()} · UPDATING`) : tx(locale, "ВЫБЕРИ ГОРОД · ТВОЙ ШКАФ", "CHOOSE CITY · YOUR CLOSET")}</Text></View>
+        <View style={styles.todayDecisionTop}><View style={styles.todayDecisionMark}><WandSparkles size={21} color={colors.graphite} /></View><Text style={styles.todayDecisionMeta}>{weatherLocation ? weather ? `${roundedTemperature}° · ${weatherLocation.name.toUpperCase()} · ${planLabel(locale, occasion, activityType).toUpperCase()}` : tx(locale, `${weatherLocation.name.toUpperCase()} · ОБНОВЛЯЮ`, `${weatherLocation.name.toUpperCase()} · UPDATING`) : tx(locale, `ВЫБЕРИ ГОРОД · ${planLabel(locale, occasion, activityType).toUpperCase()}`, `CHOOSE CITY · ${planLabel(locale, occasion, activityType).toUpperCase()}`)}</Text></View>
         <Text style={styles.todayDecisionTitle}>{tx(locale, "Что надеть сегодня", "What should I wear today")}</Text>
         <View style={styles.todayDecisionBottom}><Text style={styles.todayDecisionHint}>{weather ? weatherAdvice(weather, locale) : mode === "family" ? tx(locale, "Добавь город — учту реальную погоду", "Add your city for real weather guidance") : tx(locale, "Город нужен для точного образа", "Your city makes the look weather-aware")}</Text><View style={styles.todayDecisionArrow}><ChevronRight size={20} color={colors.graphite} /></View></View>
       </Pressable>
+      <DestinationPicker locale={locale} occasion={occasion} activityType={activityType} onOccasionChange={onOccasionChange} onActivityTypeChange={onActivityTypeChange} surface />
       {weather && weatherLocation ? <Pressable onPress={onWeather} style={styles.weatherContextCard}>
         <View style={styles.weatherContextTop}><View style={styles.weatherContextIcon}><WeatherGlyph snapshot={weather} size={20} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.weatherContextCity}>{weatherLocation.name}</Text><Text style={styles.weatherContextCondition}>{weatherLabel(weather, locale)} · {tx(locale, `ощущается как ${feelsLike}°`, `feels like ${feelsLike}°`)}</Text></View><ChevronRight size={18} color={colors.secondary} /></View>
         <Text style={styles.weatherContextAdvice}>{weatherAdvice(weather, locale)}</Text>
@@ -1188,7 +1265,7 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   );
 }
 
-function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onTakePhoto, onEnableDemo, onAppearance }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: string; setOccasion: (v: string) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onTakePhoto: () => void; onEnableDemo: () => void; onAppearance: () => void }) {
+function CreateScreen({ locale, profile, styleNames, occasion, activityType, setOccasion, setActivityType, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onTakePhoto, onEnableDemo, onAppearance }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: Occasion; activityType: ActivityType; setOccasion: (v: Occasion) => void; setActivityType: (v: ActivityType) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onTakePhoto: () => void; onEnableDemo: () => void; onAppearance: () => void }) {
   const look = outfits[activeLook];
   const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
   const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
@@ -1196,10 +1273,7 @@ function CreateScreen({ locale, profile, styleNames, occasion, setOccasion, outf
   return (
     <View>
       <Text style={styles.eyebrow}>{tx(locale, "AI LOOK LAB", "AI LOOK LAB")}</Text><Text style={styles.screenTitle}>{tx(locale, "Собери настроение", "Build a mood")}</Text><Text style={styles.lead}>{tx(locale, "MIRA использует только вещи из твоего шкафа. Ты решаешь, что оставить.", "MIRA uses only your real closet. You decide what stays.")}</Text>
-      <Text style={styles.fieldCaption}>{tx(locale, "КУДА СОБИРАЕМСЯ?", "WHAT'S THE PLAN?")}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionRail}>
-        {([{ id: "school", label: tx(locale, "Школа", "School") }, { id: "walk", label: tx(locale, "Прогулка", "Out") }, { id: "party", label: tx(locale, "Вечеринка", "Party") }, { id: "sport", label: tx(locale, "Спорт", "Sport") }] as const).map(({ id, label }) => <Pressable key={id} onPress={() => setOccasion(id)} style={[styles.occasionCard, occasion === id && styles.occasionCardActive]}><OccasionIllustration occasion={id} active={occasion === id} /><Text style={[styles.occasionLabel, occasion === id && styles.occasionLabelActive]}>{label}</Text></Pressable>)}
-      </ScrollView>
+      <DestinationPicker locale={locale} occasion={occasion} activityType={activityType} onOccasionChange={setOccasion} onActivityTypeChange={setActivityType} />
       <View style={styles.createStyleRow}><View><Text style={styles.fieldCaption}>{tx(locale, "НАПРАВЛЕНИЕ", "DIRECTION")}</Text><Text style={styles.createStyleName}>{styleNames.join(" + ")}</Text></View><View style={styles.matchPill}><Sparkles size={13} color={colors.ultraviolet} /><Text style={styles.matchText}>AI</Text></View></View>
       <Pressable onPress={onAppearance} style={styles.createHairCard}>
         <View style={styles.createHairPhoto}><HairStyleThumbnail hair={profile.hairProfile} gender={profile.genderPresentation} styleId={profile.styles[0] ?? "minimal"} preference={profile.hairProfile.stylePreference ?? "AUTO"} height={70} /></View>
@@ -1802,11 +1876,22 @@ const styles = StyleSheet.create({
   remixButton: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.violetMist, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 7 },
   remixText: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.ultraviolet },
   fieldCaption: { fontFamily: typography.bodySemibold, fontSize: 9, color: colors.secondary, letterSpacing: 1.1, marginTop: 9, marginBottom: 9 },
-  occasionRail: { gap: 8, paddingBottom: 20 },
+  destinationSurface: { borderRadius: 22, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, padding: 13, marginBottom: 14 },
+  destinationHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  destinationSummary: { fontFamily: typography.bodySemibold, fontSize: 12, color: colors.graphite, textTransform: "capitalize", marginTop: -4, marginBottom: 10 },
+  occasionRail: { gap: 8, paddingBottom: 12 },
   occasionCard: { width: 91, height: 71, borderRadius: 18, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
   occasionCardActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
   occasionLabel: { fontFamily: typography.bodySemibold, fontSize: 9.5, color: colors.secondary },
   occasionLabelActive: { color: colors.paper },
+  activityTypePanel: { borderRadius: 17, backgroundColor: colors.violetMist, padding: 11, marginBottom: 9 },
+  activityTypeTitle: { fontFamily: typography.bodySemibold, fontSize: 8, letterSpacing: 1.05, color: colors.ultraviolet, marginBottom: 8 },
+  activityTypeRail: { gap: 7, paddingRight: 6 },
+  activityTypeChip: { minHeight: 34, borderRadius: 13, backgroundColor: colors.paper, borderWidth: 1, borderColor: "#DCD5ED", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  activityTypeChipActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
+  activityTypeText: { fontFamily: typography.bodySemibold, fontSize: 8.8, color: colors.secondary },
+  activityTypeTextActive: { color: colors.paper },
+  activityTypeHint: { fontFamily: typography.bodyMedium, fontSize: 8.6, lineHeight: 13, color: colors.graphite, marginTop: 9 },
   createStyleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   createStyleName: { fontFamily: typography.displaySoft, fontSize: 14, color: colors.graphite, textTransform: "capitalize" },
   createHairCard: { minHeight: 82, borderRadius: 16, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 11, padding: 6, paddingRight: 11, marginBottom: 12 },

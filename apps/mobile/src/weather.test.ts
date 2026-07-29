@@ -22,6 +22,10 @@ describe("weather helpers", () => {
     expect(toWeatherContext(snapshot({ precipitationProbability: 70 }), "school")).toMatchObject({ rainProbability: 0.7, feelsLikeC: 6, occasion: "school" });
   });
 
+  it("keeps the selected activity in outfit context", () => {
+    expect(toWeatherContext(snapshot(), "activity", "dance")).toMatchObject({ occasion: "activity", activityType: "dance" });
+  });
+
   it("gives layering advice from feels-like temperature", () => {
     expect(weatherAdvice(snapshot({ feelsLikeC: 5 }), "ru")).toContain("базовый слой");
     expect(weatherAdvice(snapshot({ feelsLikeC: 34 }), "ru")).toContain("без лишних слоёв");

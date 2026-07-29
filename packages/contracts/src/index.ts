@@ -156,12 +156,16 @@ export type WardrobeItem = WardrobeItemInput & {
   wearCount: number;
 };
 
+export const ActivityTypeSchema = z.enum(["sport", "dance", "music", "creative", "study"]);
+export type ActivityType = z.infer<typeof ActivityTypeSchema>;
+
 export const WeatherContextSchema = z.object({
   temperatureC: z.number().min(-60).max(60),
   feelsLikeC: z.number().min(-70).max(70).optional(),
   rainProbability: z.number().min(0).max(1).default(0),
   windKph: z.number().min(0).max(300).default(0),
-  occasion: z.enum(["school", "walk", "sport", "party", "everyday"]).default("everyday"),
+  occasion: z.enum(["school", "walk", "sport", "party", "activity", "everyday"]).default("everyday"),
+  activityType: ActivityTypeSchema.optional(),
 });
 export type WeatherContext = z.infer<typeof WeatherContextSchema>;
 

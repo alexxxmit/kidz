@@ -136,6 +136,25 @@ describe("generateOutfits", () => {
     expect(options[0]?.scores.dressCode).toBeGreaterThan(0.9);
   });
 
+  it("uses the kind of after-school activity when choosing practical pieces", () => {
+    const options = generateOutfits({
+      profile: {
+        displayName: "Mira", locale: "ru", ageYears: 13, autonomyMode: "USER_DECIDES", genderPresentation: "FEMININE",
+        hairProfile: { length: "MEDIUM", color: "BROWN", openToColorAdvice: true }, schoolDressCode: "FREE_STYLE", styleMix: [{ styleId: "sporty", weight: 1 }],
+      },
+      weather: { temperatureC: 20, rainProbability: 0, windKph: 4, occasion: "activity", activityType: "sport" },
+      wardrobe: [
+        { name: "Спортивная футболка", category: "tshirt", slot: "top", colors: ["#FFFFFF"], warmth: 1, styleIds: ["sporty"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Джоггеры", category: "trousers", slot: "bottom", colors: ["#30343A"], warmth: 1, styleIds: ["sporty"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Беговые кроссовки", category: "sneakers", slot: "footwear", colors: ["#ECECEC"], warmth: 1, styleIds: ["sporty"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Классические лоферы", category: "shoes", slot: "footwear", colors: ["#222222"], warmth: 1, styleIds: ["sporty"], careState: "CLEAN", fitState: "FITS" },
+      ],
+    });
+
+    expect(options[0]?.items.some((item) => item.name === "Беговые кроссовки")).toBe(true);
+    expect(options[0]?.reasonCodes).toContain("ACTIVITY_SPORT");
+  });
+
   it("keeps Stockholm and emo looks inside their own visual codes", () => {
     const wardrobe = [
       { name: "Молочная рубашка", category: "shirt" as const, slot: "top" as const, colors: ["#EEEAE2"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN" as const, fitState: "FITS" as const },

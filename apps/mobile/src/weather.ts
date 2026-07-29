@@ -1,4 +1,4 @@
-import type { Locale, WeatherContext } from "@kidz/contracts";
+import type { ActivityType, Locale, WeatherContext } from "@kidz/contracts";
 
 export type WeatherLocation = {
   id: number;
@@ -139,10 +139,11 @@ export const weatherAdvice = (snapshot: WeatherSnapshot, locale: Locale) => {
   return locale === "ru" ? "Погода мягкая — соберу образ без обязательной верхней одежды." : "The weather is mild, so outerwear can stay optional.";
 };
 
-export const toWeatherContext = (snapshot: WeatherSnapshot | undefined, occasion: WeatherContext["occasion"]): WeatherContext => ({
+export const toWeatherContext = (snapshot: WeatherSnapshot | undefined, occasion: WeatherContext["occasion"], activityType?: ActivityType): WeatherContext => ({
   temperatureC: snapshot?.temperatureC ?? 18,
   ...(snapshot ? { feelsLikeC: snapshot.feelsLikeC } : {}),
   rainProbability: (snapshot?.precipitationProbability ?? 0) / 100,
   windKph: snapshot?.windKph ?? 0,
   occasion,
+  ...(occasion === "activity" && activityType ? { activityType } : {}),
 });

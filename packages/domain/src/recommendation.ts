@@ -47,6 +47,36 @@ const itemPresentationScore = (item: CandidateItem, presentation: OutfitRequest[
 
 const presentationScore = (items: CandidateItem[], request: OutfitRequest) => clamp(items.reduce((sum, item) => sum + itemPresentationScore(item, request.profile.genderPresentation), 0) / Math.max(items.length, 1));
 
+const itemActivityScore = (item: CandidateItem, request: OutfitRequest) => {
+  if (request.weather.occasion !== "activity") return 1;
+  const type = request.weather.activityType ?? "study";
+  if (type === "sport" || type === "dance") {
+    if (item.slot === "footwear") return item.category === "sneakers" ? 1 : item.category === "shoes" ? 0.35 : 0.55;
+    if (item.slot === "top") return ["tshirt", "hoodie"].includes(item.category) ? 1 : item.category === "sweater" ? 0.72 : 0.4;
+    if (item.slot === "bottom") return item.category === "trousers" ? 1 : item.category === "jeans" ? 0.38 : item.category === "skirt" ? 0.3 : 0.55;
+    if (item.slot === "one_piece") return type === "dance" && item.category === "dress" ? 0.62 : 0.25;
+    if (item.slot === "bag") return item.category === "backpack" || /спорт|gym|duffle/i.test(item.name) ? 1 : 0.58;
+    return 0.82;
+  }
+  if (type === "creative") {
+    if (item.slot === "top") return ["tshirt", "sweater", "hoodie"].includes(item.category) ? 1 : 0.7;
+    if (item.slot === "bottom") return ["jeans", "trousers"].includes(item.category) ? 1 : 0.72;
+    return 0.9;
+  }
+  if (type === "music") {
+    if (item.slot === "top") return ["shirt", "tshirt", "sweater"].includes(item.category) ? 1 : 0.76;
+    if (item.slot === "bottom") return ["trousers", "jeans", "skirt"].includes(item.category) ? 1 : 0.76;
+    if (item.slot === "footwear") return ["shoes", "sneakers"].includes(item.category) ? 1 : 0.68;
+    return 0.92;
+  }
+  if (item.slot === "top") return ["shirt", "tshirt", "sweater"].includes(item.category) ? 1 : 0.72;
+  if (item.slot === "bottom") return ["trousers", "jeans", "skirt"].includes(item.category) ? 1 : 0.72;
+  if (item.slot === "footwear") return ["shoes", "sneakers"].includes(item.category) ? 1 : 0.7;
+  return 0.9;
+};
+
+const activityScore = (items: CandidateItem[], request: OutfitRequest) => clamp(items.reduce((sum, item) => sum + itemActivityScore(item, request), 0) / Math.max(items.length, 1));
+
 const itemDressCodeScore = (item: CandidateItem, request: OutfitRequest) => {
   if (request.weather.occasion !== "school" || request.profile.schoolDressCode === "FREE_STYLE" || request.profile.schoolDressCode === "NOT_APPLICABLE") return 1;
   if (request.profile.schoolDressCode === "WHITE_TOP") return item.slot === "top" ? (itemIsLight(item) ? 1 : 0.08) : 1;
@@ -182,7 +212,7 @@ const combinations = (
     (item) => item.careState !== "LAUNDRY" && item.fitState !== "OUTGROWN",
   );
   const targetStyles = new Set(request.profile.styleMix.map((style) => style.styleId));
-  const rankScore = (item: CandidateItem) => itemStyleScore(item, request.profile.styleMix) * 0.72 + itemPresentationScore(item, request.profile.genderPresentation) * 0.18 + itemDressCodeScore(item, request) * 0.1;
+  const rankScore = (item: CandidateItem) => itemStyleScore(item, request.profile.styleMix) * 0.62 + itemPresentationScore(item, request.profile.genderPresentation) * 0.16 + itemDressCodeScore(item, request) * 0.08 + itemActivityScore(item, request) * 0.14;
   const ranked = (items: CandidateItem[], limit: number) => {
     let candidates = [...items];
     if (request.weather.occasion === "school" && !["FREE_STYLE", "NOT_APPLICABLE"].includes(request.profile.schoolDressCode)) {
@@ -275,6 +305,7 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
     const style = weightedStyleScore(items, request.profile.styleMix);
     const presentation = presentationScore(items, request);
     const dressCode = dressCodeScore(items, request);
+    const activity = activityScore(items, request);
     const weather = weatherScore(items, request);
     const completeness = completenessScore(items);
     const styling = buildStylingGuidance(request.profile, items);
@@ -285,22 +316,35 @@ export const generateOutfits = (request: OutfitRequest): OutfitOption[] => {
       items.filter((item) => ["mid_layer", "outerwear", "headwear", "jewelry", "bag", "accessory"].includes(item.slot)).length * 0.018,
       0.072,
     );
-    const score = clamp(
-      style * 0.48 +
-      presentation * 0.17 +
-      dressCode * 0.12 +
-      weather.score * 0.1 +
-      completeness.score * 0.07 +
-      styling.stylingScore * 0.04 +
-      rotation * 0.02 +
-      totalLookBonus,
-    );
+    const score = request.weather.occasion === "activity"
+      ? clamp(
+        style * 0.43 +
+        presentation * 0.15 +
+        dressCode * 0.1 +
+        activity * 0.12 +
+        weather.score * 0.08 +
+        completeness.score * 0.06 +
+        styling.stylingScore * 0.04 +
+        rotation * 0.02 +
+        totalLookBonus,
+      )
+      : clamp(
+        style * 0.48 +
+        presentation * 0.17 +
+        dressCode * 0.12 +
+        weather.score * 0.1 +
+        completeness.score * 0.07 +
+        styling.stylingScore * 0.04 +
+        rotation * 0.02 +
+        totalLookBonus,
+      );
     const reasonCodes = [
       style >= 0.5 ? "STYLE_MATCH" : "STYLE_EXPLORATION",
       "HAIR_DIRECTION",
       "MAKEUP_DIRECTION",
       presentation >= 0.8 ? "PRESENTATION_MATCH" : "PRESENTATION_FLEX",
       request.weather.occasion === "school" ? `DRESS_CODE_${request.profile.schoolDressCode}` : "NO_DRESS_CODE",
+      request.weather.occasion === "activity" ? `ACTIVITY_${(request.weather.activityType ?? "study").toUpperCase()}` : "NO_ACTIVITY_RULE",
       items.some((item) => item.slot === "jewelry" || item.slot === "bag" || item.slot === "accessory")
         ? "ACCESSORY_BALANCE"
         : "ACCESSORY_IDEA",

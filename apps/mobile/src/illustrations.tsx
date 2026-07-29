@@ -132,7 +132,7 @@ export function GarmentIllustration({ item, height = 92 }: { item: Garment; heig
   return <PhotoGridCrop {...reference} height={height} rounded={18} inset={5} />;
 }
 
-export function OccasionIllustration({ occasion, active = false }: { occasion: "school" | "walk" | "party" | "sport"; active?: boolean }) {
+export function OccasionIllustration({ occasion, active = false }: { occasion: "school" | "walk" | "party" | "sport" | "activity"; active?: boolean }) {
   const fg = active ? "#FFFFFF" : ink;
   const accent = active ? "#FFD27C" : "#6C4BFF";
   return <Svg width="42" height="34" viewBox="0 0 64 52">
@@ -140,6 +140,7 @@ export function OccasionIllustration({ occasion, active = false }: { occasion: "
     {occasion === "walk" && <G><Path d="M11 34 Q21 25 30 31 L40 39 Q48 41 55 43 Q54 49 46 49 L15 47 Q8 44 11 34 Z" fill="none" stroke={fg} strokeWidth="3" /><Path d="M17 32 L21 19 L29 13 L34 23" fill="none" stroke={accent} strokeWidth="4" strokeLinecap="round" /><Line x1="18" y1="40" x2="48" y2="43" stroke={accent} strokeWidth="2" /></G>}
     {occasion === "party" && <G><Circle cx="32" cy="27" r="16" fill="none" stroke={fg} strokeWidth="3" /><Path d="M17 27 H47 M32 11 V43 M21 16 Q32 27 43 16 M21 38 Q32 27 43 38" fill="none" stroke={accent} strokeWidth="2" /><Path d="M8 13 L11 8 L14 13 L19 16 L14 19 L11 24 L8 19 L3 16 Z" fill={accent} /></G>}
     {occasion === "sport" && <G><Path d="M13 34 Q24 26 34 31 L43 37 L57 40 Q56 48 47 48 L16 46 Q9 44 13 34 Z" fill="none" stroke={fg} strokeWidth="3" /><Path d="M22 30 L29 20 L40 24" fill="none" stroke={accent} strokeWidth="4" strokeLinecap="round" /><Line x1="7" y1="20" x2="17" y2="20" stroke={fg} strokeWidth="3" /><Line x1="4" y1="27" x2="15" y2="27" stroke={fg} strokeWidth="3" /></G>}
+    {occasion === "activity" && <G><Rect x="10" y="9" width="44" height="38" rx="13" fill="none" stroke={fg} strokeWidth="3" /><Path d="M23 36 Q28 25 35 16" fill="none" stroke={accent} strokeWidth="4" strokeLinecap="round" /><Circle cx="23" cy="37" r="5" fill={accent} /><Path d="M40 17 V33 Q40 39 35 39 Q31 39 31 35 Q31 31 36 31 Q39 31 40 33 M40 20 L49 18 V30 Q49 36 44 36" fill="none" stroke={fg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></G>}
   </Svg>;
 }
 
