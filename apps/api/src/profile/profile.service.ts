@@ -22,6 +22,7 @@ export class ProfileService {
         genderPresentation: input.genderPresentation,
         hairProfile: input.hairProfile,
         schoolDressCode: input.schoolDressCode,
+        schoolUniformDescription: input.schoolUniformDescription ?? "",
         styleMix: input.styleMix,
       })
       .returning();
@@ -35,6 +36,7 @@ export class ProfileService {
       genderPresentation: row.genderPresentation as Profile["genderPresentation"],
       hairProfile: row.hairProfile as HairProfile,
       schoolDressCode: row.schoolDressCode as Profile["schoolDressCode"],
+      schoolUniformDescription: row.schoolUniformDescription,
       styleMix: row.styleMix as StyleMixEntry[],
       createdAt: row.createdAt.toISOString(),
     };
@@ -52,6 +54,7 @@ export class ProfileService {
       genderPresentation: row.genderPresentation as Profile["genderPresentation"],
       hairProfile: row.hairProfile as HairProfile,
       schoolDressCode: row.schoolDressCode as Profile["schoolDressCode"],
+      schoolUniformDescription: row.schoolUniformDescription,
       styleMix: row.styleMix as StyleMixEntry[],
       createdAt: row.createdAt.toISOString(),
     };

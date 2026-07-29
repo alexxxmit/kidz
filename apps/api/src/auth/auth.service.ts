@@ -48,6 +48,7 @@ export class AuthService {
         genderPresentation: input.genderPresentation,
         hairProfile: input.hairProfile,
         schoolDressCode: input.schoolDressCode,
+        schoolUniformDescription: input.schoolUniformDescription ?? "",
         styleMix: input.styleMix,
       });
       await tx.insert(entitlements).values({ userId, plan: "FREE", source: "NONE", active: false });
@@ -62,6 +63,7 @@ export class AuthService {
       genderPresentation: input.genderPresentation,
       hairProfile: input.hairProfile,
       schoolDressCode: input.schoolDressCode,
+      schoolUniformDescription: input.schoolUniformDescription ?? "",
       ...(input.avatarUri ? { avatarUri: input.avatarUri } : {}),
       privacyState,
       ageMode: mode,
@@ -114,6 +116,7 @@ export class AuthService {
     genderPresentation: string;
     hairProfile: unknown;
     schoolDressCode: string;
+    schoolUniformDescription: string;
     avatarUri?: string | null;
     privacyState: string;
     ageMode: string;
@@ -129,6 +132,7 @@ export class AuthService {
       genderPresentation: row.genderPresentation as SocialAccount["genderPresentation"],
       hairProfile: row.hairProfile as SocialAccount["hairProfile"],
       schoolDressCode: row.schoolDressCode as SocialAccount["schoolDressCode"],
+      schoolUniformDescription: row.schoolUniformDescription,
       ...(row.avatarUri ? { avatarUri: row.avatarUri } : {}),
       privacyState: row.privacyState as SocialAccount["privacyState"],
       ageMode: row.ageMode as SocialAccount["ageMode"],

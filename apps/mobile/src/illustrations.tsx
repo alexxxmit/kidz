@@ -1,4 +1,4 @@
-import type { GenderPresentation, HairColor, HairProfile, HairStylePreference, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
+import type { GenderPresentation, HairColor, HairLength, HairProfile, HairStylePreference, OutfitOption, WardrobeItemInput } from "@kidz/contracts";
 import { Image, StyleSheet, View } from "react-native";
 import Svg, { Circle, G, Line, Path, Rect } from "react-native-svg";
 
@@ -14,10 +14,13 @@ const stockholmAccessoryGrid = require("../assets/editorial/stockholm-accessorie
 const hairReferenceGrid = require("../assets/editorial/style-hair-reference-grid-v1.png");
 const hairStylePickerGrid = require("../assets/editorial/hair-style-picker-grid-v1.png");
 const makeupReferenceGrid = require("../assets/editorial/style-makeup-reference-grid-v1.png");
+const schoolDressCodeGrid = require("../assets/editorial/school-dress-code-grid-v1.png");
+const hairLengthGrid = require("../assets/editorial/hair-length-grid-v1.png");
+const veryLongHairGrid = require("../assets/editorial/hair-length-very-long-grid-v1.png");
 
-function PhotoGridCrop({ source, cell, columns, rows, height, rounded = 22, inset = 0 }: { source: number; cell: GridCell; columns: number; rows: number; height: number; rounded?: number; inset?: number }) {
+function PhotoGridCrop({ source, cell, columns, rows, height, rounded = 22, inset = 0, edgeMask = true }: { source: number; cell: GridCell; columns: number; rows: number; height: number; rounded?: number; inset?: number; edgeMask?: boolean }) {
   const cellScale = 100 + inset * 2;
-  return <View style={[styles.photoCrop, { height, borderRadius: rounded }]}><Image source={source} resizeMode="stretch" style={{ position: "absolute", width: `${columns * cellScale}%`, height: `${rows * cellScale}%`, left: `${-(cell.column * cellScale + inset)}%`, top: `${-(cell.row * cellScale + inset)}%` }} /><View pointerEvents="none" style={styles.cropEdgeMask} /></View>;
+  return <View style={[styles.photoCrop, { height, borderRadius: rounded }]}><Image source={source} resizeMode="stretch" style={{ position: "absolute", width: `${columns * cellScale}%`, height: `${rows * cellScale}%`, left: `${-(cell.column * cellScale + inset)}%`, top: `${-(cell.row * cellScale + inset)}%` }} />{edgeMask && <View pointerEvents="none" style={styles.cropEdgeMask} />}</View>;
 }
 
 const productCell = (item: Garment): GridCell => {
@@ -140,11 +143,22 @@ export function OccasionIllustration({ occasion, active = false }: { occasion: "
   </Svg>;
 }
 
-export function SchoolDressCodeIllustration({ mode, active = false }: { mode: "UNIFORM" | "WHITE_TOP" | "FREE_STYLE"; active?: boolean }) {
-  const outline = active ? "#FFFFFF" : ink;
-  const top = mode === "FREE_STYLE" ? "#6C4BFF" : "#F7F5EF";
-  const bottom = mode === "UNIFORM" ? "#27344E" : mode === "WHITE_TOP" ? "#4E596B" : "#D55E79";
-  return <Svg width="66" height="72" viewBox="0 0 80 90"><Path d="M25 18 L13 28 L19 41 L27 36 L27 55 L53 55 L53 36 L61 41 L67 28 L55 18 L48 14 Q40 22 32 14 Z" fill={top} stroke={outline} strokeWidth="2.5" strokeLinejoin="round" />{mode === "UNIFORM" && <><Path d="M32 16 L40 29 L48 16" fill="none" stroke="#6C4BFF" strokeWidth="2.5" /><Path d="M40 28 L36 41 L40 48 L44 41 Z" fill="#7D2938" /></>}{mode === "FREE_STYLE" && <Path d="M29 34 Q40 26 51 34 L47 42 Q40 37 33 42 Z" fill="#FFD27C" />}<Path d="M26 55 L40 55 L37 82 L22 82 Z M40 55 L54 55 L58 82 L43 82 Z" fill={bottom} stroke={outline} strokeWidth="2.5" strokeLinejoin="round" />{mode === "WHITE_TOP" && <Path d="M23 77 H58" stroke="#B7DFF7" strokeWidth="3" />}</Svg>;
+export function SchoolDressCodeIllustration({ mode, gender = "NEUTRAL", active = false }: { mode: "UNIFORM" | "BUSINESS_STYLE" | "FREE_STYLE"; gender?: GenderPresentation; active?: boolean }) {
+  const column = mode === "UNIFORM" ? 0 : mode === "BUSINESS_STYLE" ? 1 : 2;
+  const row = gender === "FEMININE" ? 0 : 1;
+  return <View style={[styles.schoolPhoto, active && styles.schoolPhotoActive]}>
+    <PhotoGridCrop source={schoolDressCodeGrid} cell={{ column, row }} columns={3} rows={2} height={118} rounded={15} edgeMask={false} />
+  </View>;
+}
+
+export function HairLengthIllustration({ length, gender = "FEMININE", active = false }: { length: HairLength; gender?: GenderPresentation; active?: boolean }) {
+  const row = gender === "FEMININE" ? 0 : 1;
+  const column: Record<Exclude<HairLength, "VERY_LONG">, number> = { BUZZ: 0, SHORT: 1, MEDIUM: 2, LONG: 3 };
+  const source = length === "VERY_LONG" ? veryLongHairGrid : hairLengthGrid;
+  const cell = { column: length === "VERY_LONG" ? 0 : column[length], row };
+  return <View style={[styles.hairLengthPhoto, active && styles.hairLengthPhotoActive]}>
+    <PhotoGridCrop source={source} cell={cell} columns={length === "VERY_LONG" ? 1 : 5} rows={2} height={125} rounded={14} inset={0} edgeMask={false} />
+  </View>;
 }
 
 const styleFamilyRow = (styleId: string) => {
@@ -160,7 +174,7 @@ const beautyCell = (kind: "hair" | "makeup", hair: HairProfile, gender: GenderPr
   const masculine = gender === "MASCULINE" || gender === "NEUTRAL" || gender === "NOT_SPECIFIED";
   const row = styleFamilyRow(styleId);
   if (kind === "makeup") return { column: (masculine ? 3 : 0) + variant, row };
-  const short = hair.length === "BUZZ" || hair.length === "SHORT";
+  const short = hair.length === "BUZZ";
   const selected = hair.stylePreference ?? "AUTO";
   if (short) {
     if (selected === "TEXTURED" || selected === "WAVES_CURLS" || selected === "BLOWOUT") return { column: 1, row };
@@ -194,4 +208,8 @@ const styles = StyleSheet.create({
   cropEdgeMask: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, borderWidth: 14, borderColor: "#F5F1F7", zIndex: 2 },
   accessoryPhotoRow: { width: "100%", flexDirection: "row", gap: 3, overflow: "hidden" },
   accessoryPhotoCell: { flex: 1, minWidth: 0, overflow: "hidden" },
+  schoolPhoto: { width: "100%", height: 118, borderRadius: 15, overflow: "hidden", borderWidth: 1, borderColor: "#E3DEE8" },
+  schoolPhotoActive: { borderColor: "#FFFFFF", borderWidth: 2 },
+  hairLengthPhoto: { width: "100%", height: 125, borderRadius: 14, overflow: "hidden", borderWidth: 1, borderColor: "#E3DEE8" },
+  hairLengthPhotoActive: { borderColor: "#FFFFFF", borderWidth: 2 },
 });

@@ -61,24 +61,24 @@ const hairColorLabel: Record<HairColor, LocalizedText> = {
 
 const fallbackHair: Record<HairLength, LocalizedText> = {
   BUZZ: {
-    ru: "чистый контур и аккуратная укладка без лишнего объёма",
-    en: "a clean outline and neat finish without extra volume",
+    ru: "укладка для волос до подбородка: мягкая текстура, прямой срез или лёгкие волны",
+    en: "styling for chin-length hair: soft texture, a clean cut or light waves",
   },
   SHORT: {
-    ru: "текстурированная короткая укладка с естественным объёмом",
-    en: "a textured short style with natural volume",
+    ru: "укладка для волос до плеч с естественным объёмом",
+    en: "shoulder-length styling with natural volume",
   },
   MEDIUM: {
-    ru: "мягкие слои или пробор, который держит силуэт собранным",
-    en: "soft layers or a part that keeps the silhouette composed",
+    ru: "укладка для волос до груди: мягкие слои или аккуратный пробор",
+    en: "chest-length styling with soft layers or a neat part",
   },
   LONG: {
-    ru: "низкий хвост, гладкий пучок или свободные слои",
-    en: "a low ponytail, sleek bun or loose layers",
+    ru: "укладка для волос до талии: низкий хвост, гладкий пучок или свободные слои",
+    en: "waist-length styling: a low ponytail, sleek bun or loose layers",
   },
   VERY_LONG: {
-    ru: "длинные слои, гладкий хвост или аккуратная коса",
-    en: "long layers, a sleek ponytail or a neat braid",
+    ru: "укладка для волос примерно до колен: длинная коса, гладкий хвост или собранная форма",
+    en: "styling for around knee-length hair: a long braid, sleek ponytail or an updo",
   },
 };
 

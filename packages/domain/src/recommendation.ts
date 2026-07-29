@@ -50,7 +50,19 @@ const presentationScore = (items: CandidateItem[], request: OutfitRequest) => cl
 const itemDressCodeScore = (item: CandidateItem, request: OutfitRequest) => {
   if (request.weather.occasion !== "school" || request.profile.schoolDressCode === "FREE_STYLE" || request.profile.schoolDressCode === "NOT_APPLICABLE") return 1;
   if (request.profile.schoolDressCode === "WHITE_TOP") return item.slot === "top" ? (itemIsLight(item) ? 1 : 0.08) : 1;
+  if (request.profile.schoolDressCode === "BUSINESS_STYLE") {
+    if (item.slot === "top") return item.category === "shirt" ? 1 : ["sweater", "tshirt"].includes(item.category) ? 0.62 : 0.22;
+    if (item.slot === "bottom") return ["trousers", "skirt"].includes(item.category) ? 1 : item.category === "jeans" ? 0.28 : 0.45;
+    if (item.slot === "footwear") return item.category === "shoes" ? 1 : item.category === "boots" ? 0.82 : 0.28;
+    if (item.slot === "mid_layer" || item.slot === "outerwear") return ["jacket", "coat", "sweater"].includes(item.category) ? 0.95 : 0.42;
+    return 0.78;
+  }
   if (item.styleIds.includes("school-uniform")) return 1;
+  const uniformWords = (request.profile.schoolUniformDescription ?? "")
+    .toLowerCase()
+    .split(/[^a-zа-яё0-9]+/i)
+    .filter((word) => word.length >= 4);
+  if (uniformWords.some((word) => item.name.toLowerCase().includes(word))) return 1;
   if (item.slot === "top") return item.category === "shirt" && itemIsLight(item) ? 1 : itemIsLight(item) ? 0.68 : 0.12;
   if (item.slot === "bottom") return ["trousers", "skirt"].includes(item.category) && itemIsDark(item) ? 1 : itemIsDark(item) ? 0.55 : 0.15;
   if (item.slot === "footwear") return ["shoes", "boots"].includes(item.category) ? 1 : itemIsLight(item) || itemIsDark(item) ? 0.72 : 0.35;

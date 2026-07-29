@@ -12,12 +12,12 @@ export const GENDER_OPTIONS: Array<{
   { id: "NOT_SPECIFIED", symbol: "—", label: { ru: "Не указывать", en: "Skip" }, description: { ru: "универсальные советы", en: "universal guidance" } },
 ];
 
-export const HAIR_LENGTH_OPTIONS: Array<{ id: HairLength; label: Record<Locale, string> }> = [
-  { id: "BUZZ", label: { ru: "Очень короткие", en: "Buzz" } },
-  { id: "SHORT", label: { ru: "Короткие", en: "Short" } },
-  { id: "MEDIUM", label: { ru: "Средние", en: "Medium" } },
-  { id: "LONG", label: { ru: "Длинные", en: "Long" } },
-  { id: "VERY_LONG", label: { ru: "Очень длинные", en: "Very long" } },
+export const HAIR_LENGTH_OPTIONS: Array<{ id: HairLength; label: Record<Locale, string>; description: Record<Locale, string> }> = [
+  { id: "BUZZ", label: { ru: "Очень короткие", en: "Very short" }, description: { ru: "до подбородка", en: "chin length" } },
+  { id: "SHORT", label: { ru: "Короткие", en: "Short" }, description: { ru: "до плеч", en: "shoulder length" } },
+  { id: "MEDIUM", label: { ru: "Средние", en: "Medium" }, description: { ru: "до груди", en: "chest length" } },
+  { id: "LONG", label: { ru: "Длинные", en: "Long" }, description: { ru: "до талии", en: "waist length" } },
+  { id: "VERY_LONG", label: { ru: "Очень длинные", en: "Very long" }, description: { ru: "примерно до колен", en: "around knee length" } },
 ];
 
 export const HAIR_COLOR_OPTIONS: Array<{ id: HairColor; color: string; label: Record<Locale, string> }> = [
@@ -39,10 +39,10 @@ export const HAIR_STYLE_OPTIONS: Array<{
   minLength: HairLength[];
 }> = [
   { id: "AUTO", label: { ru: "Подберёт MIRA", en: "Let MIRA choose" }, description: { ru: "по стилю и образу", en: "for the style and look" }, minLength: ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
-  { id: "TEXTURED", label: { ru: "Текстура", en: "Texture" }, description: { ru: "живой объём и пряди", en: "natural volume and pieces" }, minLength: ["BUZZ", "SHORT", "MEDIUM"] },
-  { id: "BLOWOUT", label: { ru: "Объёмный blowout", en: "Bouncy blowout" }, description: { ru: "мягкий объём у лица", en: "soft face-framing volume" }, minLength: ["MEDIUM", "LONG", "VERY_LONG"] },
-  { id: "STRAIGHT", label: { ru: "Прямые", en: "Straight" }, description: { ru: "ровная гладкая длина", en: "smooth polished length" }, minLength: ["SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
-  { id: "WAVES_CURLS", label: { ru: "Волны / локоны", en: "Waves / curls" }, description: { ru: "мягкая форма и движение", en: "soft shape and movement" }, minLength: ["SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
+  { id: "TEXTURED", label: { ru: "Текстура", en: "Texture" }, description: { ru: "живой объём и пряди", en: "natural volume and pieces" }, minLength: ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
+  { id: "BLOWOUT", label: { ru: "Объёмный blowout", en: "Bouncy blowout" }, description: { ru: "мягкий объём у лица", en: "soft face-framing volume" }, minLength: ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
+  { id: "STRAIGHT", label: { ru: "Прямые", en: "Straight" }, description: { ru: "ровная гладкая длина", en: "smooth polished length" }, minLength: ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
+  { id: "WAVES_CURLS", label: { ru: "Волны / локоны", en: "Waves / curls" }, description: { ru: "мягкая форма и движение", en: "soft shape and movement" }, minLength: ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
   { id: "SLEEK", label: { ru: "Гладкая укладка", en: "Sleek" }, description: { ru: "чистый контур и пробор", en: "clean outline and part" }, minLength: ["BUZZ", "SHORT", "MEDIUM", "LONG", "VERY_LONG"] },
   { id: "UPDO_BRAID", label: { ru: "Пучок / коса", en: "Updo / braid" }, description: { ru: "собранные волосы", en: "hair worn up" }, minLength: ["MEDIUM", "LONG", "VERY_LONG"] },
 ];

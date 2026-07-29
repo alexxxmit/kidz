@@ -24,7 +24,7 @@ export const GenderPresentationSchema = z.enum([
 ]);
 export type GenderPresentation = z.infer<typeof GenderPresentationSchema>;
 
-export const SchoolDressCodeSchema = z.enum(["NOT_APPLICABLE", "UNIFORM", "WHITE_TOP", "FREE_STYLE"]);
+export const SchoolDressCodeSchema = z.enum(["NOT_APPLICABLE", "UNIFORM", "BUSINESS_STYLE", "WHITE_TOP", "FREE_STYLE"]);
 export type SchoolDressCode = z.infer<typeof SchoolDressCodeSchema>;
 
 export const HairLengthSchema = z.enum([
@@ -78,6 +78,7 @@ export const ProfileInputSchema = z.object({
   genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
   hairProfile: HairProfileSchema.default(DEFAULT_HAIR_PROFILE),
   schoolDressCode: SchoolDressCodeSchema.default("FREE_STYLE"),
+  schoolUniformDescription: z.string().trim().max(280).optional(),
   styleMix: z.array(StyleMixEntrySchema).min(1).max(3),
 });
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
@@ -255,6 +256,7 @@ export const AccountInputSchema = z.object({
   genderPresentation: GenderPresentationSchema.default("NOT_SPECIFIED"),
   hairProfile: HairProfileSchema.default(DEFAULT_HAIR_PROFILE),
   schoolDressCode: SchoolDressCodeSchema.default("FREE_STYLE"),
+  schoolUniformDescription: z.string().trim().max(280).optional(),
   privacyState: PrivacyStateSchema.optional(),
 });
 export type AccountInput = z.infer<typeof AccountInputSchema>;
@@ -266,6 +268,7 @@ export const AccountPatchInputSchema = z.object({
   genderPresentation: GenderPresentationSchema.optional(),
   hairProfile: HairProfileSchema.optional(),
   schoolDressCode: SchoolDressCodeSchema.optional(),
+  schoolUniformDescription: z.string().trim().max(280).optional(),
   privacyState: PrivacyStateSchema.optional(),
 });
 export type AccountPatchInput = z.infer<typeof AccountPatchInputSchema>;

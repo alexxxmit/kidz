@@ -115,6 +115,27 @@ describe("generateOutfits", () => {
     expect(options[0]?.scores.dressCode).toBeGreaterThan(0.8);
   });
 
+  it("builds a business-style school look without requiring a uniform", () => {
+    const options = generateOutfits({
+      profile: {
+        displayName: "Mira", locale: "ru", ageYears: 15, autonomyMode: "USER_DECIDES", genderPresentation: "FEMININE",
+        hairProfile: { length: "MEDIUM", color: "BROWN", openToColorAdvice: true }, schoolDressCode: "BUSINESS_STYLE", styleMix: [{ styleId: "stockholm", weight: 1 }],
+      },
+      weather: { temperatureC: 18, rainProbability: 0, windKph: 5, occasion: "school" },
+      wardrobe: [
+        { name: "Голубая рубашка", category: "shirt", slot: "top", colors: ["#DDE9F2"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Футболка с принтом", category: "tshirt", slot: "top", colors: ["#111111"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Серые брюки", category: "trousers", slot: "bottom", colors: ["#51545A"], warmth: 2, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Рваные джинсы", category: "jeans", slot: "bottom", colors: ["#567089"], warmth: 2, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Лоферы", category: "shoes", slot: "footwear", colors: ["#2B201D"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+        { name: "Кроссовки", category: "sneakers", slot: "footwear", colors: ["#FFFFFF"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN", fitState: "FITS" },
+      ],
+    });
+
+    expect(options[0]?.items.map((item) => item.name)).toEqual(expect.arrayContaining(["Голубая рубашка", "Серые брюки", "Лоферы"]));
+    expect(options[0]?.scores.dressCode).toBeGreaterThan(0.9);
+  });
+
   it("keeps Stockholm and emo looks inside their own visual codes", () => {
     const wardrobe = [
       { name: "Молочная рубашка", category: "shirt" as const, slot: "top" as const, colors: ["#EEEAE2"], warmth: 1, styleIds: ["stockholm"], careState: "CLEAN" as const, fitState: "FITS" as const },

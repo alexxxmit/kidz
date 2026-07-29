@@ -37,6 +37,7 @@ export class SocialService {
     if (input.genderPresentation !== undefined) changes.genderPresentation = input.genderPresentation;
     if (input.hairProfile !== undefined) changes.hairProfile = input.hairProfile;
     if (input.schoolDressCode !== undefined) changes.schoolDressCode = input.schoolDressCode;
+    if (input.schoolUniformDescription !== undefined) changes.schoolUniformDescription = input.schoolUniformDescription;
     if (input.privacyState !== undefined) changes.privacyState = context.ageYears < 13 && input.privacyState === "PUBLIC" ? "CIRCLE" : input.privacyState;
     if (Object.keys(changes).length) await this.database.db.update(socialAccounts).set(changes).where(eq(socialAccounts.id, context.accountId));
     return this.me(context);
@@ -300,6 +301,6 @@ export class SocialService {
   }
 
   private withCounts(row: typeof socialAccounts.$inferSelect) {
-    return { ...this.publicAccount(row), locale: row.locale, ageYears: row.ageYears, ageMode: row.ageMode, genderPresentation: row.genderPresentation, hairProfile: row.hairProfile, schoolDressCode: row.schoolDressCode, followersCount: 0, followingCount: 0, looksCount: 0, createdAt: row.createdAt.toISOString() };
+    return { ...this.publicAccount(row), locale: row.locale, ageYears: row.ageYears, ageMode: row.ageMode, genderPresentation: row.genderPresentation, hairProfile: row.hairProfile, schoolDressCode: row.schoolDressCode, schoolUniformDescription: row.schoolUniformDescription, followersCount: 0, followingCount: 0, looksCount: 0, createdAt: row.createdAt.toISOString() };
   }
 }

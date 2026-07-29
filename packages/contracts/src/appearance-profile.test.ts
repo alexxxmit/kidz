@@ -17,15 +17,19 @@ describe("appearance profile contracts", () => {
     expect(account.schoolDressCode).toBe("FREE_STYLE");
   });
 
-  it("validates gender and hair updates", () => {
+  it("validates gender, hair, and school-setting updates", () => {
     const update = AccountPatchInputSchema.parse({
       genderPresentation: "FEMININE",
       hairProfile: { length: "LONG", color: "BLACK", openToColorAdvice: true, stylePreference: "BLOWOUT" },
       schoolDressCode: "UNIFORM",
+      schoolUniformDescription: "Тёмно-синий жакет, белая рубашка и серая юбка",
     });
 
     expect(update.hairProfile?.length).toBe("LONG");
     expect(update.hairProfile?.stylePreference).toBe("BLOWOUT");
+    expect(update.schoolUniformDescription).toContain("жакет");
+    expect(AccountPatchInputSchema.safeParse({ schoolDressCode: "BUSINESS_STYLE" }).success).toBe(true);
     expect(AccountPatchInputSchema.safeParse({ genderPresentation: "UNKNOWN" }).success).toBe(false);
+    expect(AccountPatchInputSchema.safeParse({ schoolUniformDescription: "x".repeat(281) }).success).toBe(false);
   });
 });
