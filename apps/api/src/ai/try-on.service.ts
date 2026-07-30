@@ -34,7 +34,8 @@ const safeModelId = () => {
 export const falHeaders = (key: string, includeJson = false): Record<string, string> => ({
   authorization: `Key ${key}`,
   ...(includeJson ? { "content-type": "application/json" } : {}),
-  "x-fal-store-io": "0",
+  // Queue responses must remain retrievable while the client polls the job.
+  // A one-hour lifecycle keeps that window short without disabling result storage.
   "x-fal-object-lifecycle-preference": JSON.stringify({ expiration_duration_seconds: 3600 }),
 });
 

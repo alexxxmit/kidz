@@ -1,7 +1,7 @@
 import type { TryOnSubmitInput } from "@kidz/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildTryOnPrompt, validFalQueueUrl } from "./try-on.service.js";
+import { buildTryOnPrompt, falHeaders, validFalQueueUrl } from "./try-on.service.js";
 
 const input: TryOnSubmitInput = {
   ageYears: 15,
@@ -38,5 +38,14 @@ describe("validFalQueueUrl", () => {
       .toBe("https://queue.fal.run/fal-ai/nano-banana/requests/request-id/status");
     expect(validFalQueueUrl("https://example.com/fal-ai/nano-banana/requests/request-id/status")).toBeUndefined();
     expect(validFalQueueUrl("http://queue.fal.run/fal-ai/nano-banana/requests/request-id/status")).toBeUndefined();
+  });
+});
+
+describe("falHeaders", () => {
+  it("keeps queued results available for polling and limits their lifecycle", () => {
+    const headers = falHeaders("secret", true);
+    expect(headers).not.toHaveProperty("x-fal-store-io");
+    expect(headers["x-fal-object-lifecycle-preference"]).toContain("3600");
+    expect(headers["content-type"]).toBe("application/json");
   });
 });
