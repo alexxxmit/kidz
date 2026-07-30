@@ -795,7 +795,14 @@ export default function MiraApp() {
     // Let React paint the new closet card before image conversion or network work begins.
     await delay(0);
     try {
-      const durableSource = Platform.OS === "web" ? await preparePersistentWebSource(asset.uri, pickerDataUrl) : asset.uri;
+      // Video frames already arrive as compact, durable data URLs. Sending them
+      // through ImageManipulator again can stall mobile Safari before the first
+      // closet card progresses.
+      const durableSource = Platform.OS === "web"
+        ? asset.uri.startsWith("data:image/")
+          ? (pickerDataUrl ?? asset.uri)
+          : await preparePersistentWebSource(asset.uri, pickerDataUrl)
+        : asset.uri;
       const storedSource = await persistWardrobeImage(durableSource, localId, "source").catch(() => durableSource);
       setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageUri: storedSource } : item));
       const imageDataUrl = pickerDataUrl ?? (durableSource.startsWith("data:image/") ? durableSource : await prepareTryOnImage(asset.uri, "garment"));
@@ -878,18 +885,18 @@ export default function MiraApp() {
       setVideoScan({ phase: "adding", completed: 0, total: frames.length });
       for (const [index, frame] of frames.entries()) {
         const base64 = frame.imageDataUrl.split(",", 2)[1] ?? "";
-        await processWardrobeAsset({
+        void processWardrobeAsset({
           uri: frame.imageDataUrl,
           base64,
           mimeType: "image/jpeg",
-          width: 960,
-          height: 960,
+          width: 720,
+          height: 720,
           fileName: `video-item-${index + 1}.jpg`,
         }, index);
         setVideoScan({ phase: "adding", completed: index + 1, total: frames.length });
         await delay(0);
       }
-      notify(tx(locale, `Видео разобрано: ${frames.length} вещей добавлены отдельно`, `Video scanned: ${frames.length} pieces were added separately`));
+      notify(tx(locale, `${frames.length} карточек уже в шкафу · AI обрабатывает их в фоне`, `${frames.length} cards are in your closet · AI is finishing them in the background`));
     } catch {
       notify(tx(locale, "Не удалось разобрать видео. Снимай до 30 секунд и задерживайся на каждой вещи.", "Could not scan the video. Keep it under 30 seconds and pause on each piece."));
     } finally {

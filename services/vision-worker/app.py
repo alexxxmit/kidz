@@ -258,7 +258,7 @@ async def video_frames(file: UploadFile = File(...)):
                 [
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(source_path),
                     "-t", str(min(duration, 35)), "-vf",
-                    f"fps=1/{interval:.4f},scale='min(960,iw)':-2",
+                    f"fps=1/{interval:.4f},scale='min(720,iw)':-2",
                     "-q:v", "3", frame_pattern,
                 ],
                 capture_output=True,
@@ -278,7 +278,7 @@ async def video_frames(file: UploadFile = File(...)):
                 continue
             signatures.append(signature)
             output = BytesIO()
-            image.save(output, format="JPEG", quality=84, optimize=True)
+            image.save(output, format="JPEG", quality=78, optimize=True)
             selected.append(
                 VideoFrame(
                     image_base64=base64.b64encode(output.getvalue()).decode("ascii"),
