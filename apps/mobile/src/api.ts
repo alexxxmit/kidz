@@ -16,6 +16,7 @@ import type {
   WardrobeVisionResult,
   WeatherContext,
 } from "@kidz/contracts";
+import { Platform } from "react-native";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 const VISION_URL = process.env.EXPO_PUBLIC_VISION_URL ?? "http://localhost:8000";
@@ -106,6 +107,37 @@ export const cutoutWardrobePhoto = async (imageBase64: string) => {
   if (!response.ok) throw new Error(`Vision ${response.status}`);
   const result = await response.json() as { image_base64: string; mime_type: "image/png" };
   return `data:${result.mime_type};base64,${result.image_base64}`;
+};
+
+export type WardrobeVideoAsset = {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+  file?: Blob | null;
+};
+
+export type WardrobeVideoFrame = {
+  imageDataUrl: string;
+  timestampMs: number;
+};
+
+export const extractWardrobeVideoFrames = async (asset: WardrobeVideoAsset): Promise<WardrobeVideoFrame[]> => {
+  const body = new FormData();
+  const name = asset.fileName || "mira-closet-video.mp4";
+  const type = asset.mimeType || "video/mp4";
+  if (Platform.OS === "web") {
+    const blob = asset.file ?? await (await fetch(asset.uri)).blob();
+    body.append("file", blob, name);
+  } else {
+    body.append("file", { uri: asset.uri, name, type } as never);
+  }
+  const response = await fetch(`${VISION_URL}/v1/video-frames`, { method: "POST", body });
+  if (!response.ok) throw new Error(`Vision video ${response.status}: ${await response.text()}`);
+  const result = await response.json() as { frames: Array<{ image_base64: string; mime_type: "image/jpeg"; timestamp_ms: number }> };
+  return result.frames.map((frame) => ({
+    imageDataUrl: `data:${frame.mime_type};base64,${frame.image_base64}`,
+    timestampMs: frame.timestamp_ms,
+  }));
 };
 
 export const analyzeWardrobePhoto = (accessToken: string, input: WardrobeVisionInput) =>

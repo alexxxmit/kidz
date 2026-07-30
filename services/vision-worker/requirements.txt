@@ -3,4 +3,5 @@ uvicorn[standard]==0.37.0
 pydantic==2.12.3
 python-multipart==0.0.20
 Pillow==11.3.0
+numpy==2.2.6
 rembg[cpu]==2.0.61

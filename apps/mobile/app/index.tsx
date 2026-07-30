@@ -45,6 +45,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   UserRound,
+  Video,
   WandSparkles,
   WashingMachine,
   Wind,
@@ -76,6 +77,7 @@ import {
   createVirtualTryOn,
   cutoutWardrobePhoto,
   deleteAccount,
+  extractWardrobeVideoFrames,
   followSocialAccount,
   loadConversations,
   loadFollowRequests,
@@ -110,6 +112,7 @@ type TryOnViewState = {
   remainingThisMonth?: number;
   message?: string;
 };
+type VideoScanState = { phase: "extracting" | "adding"; completed: number; total: number };
 type ProfileState = {
   locale: Locale;
   age: number;
@@ -290,6 +293,7 @@ export default function MiraApp() {
   const [toast, setToast] = useState<string>();
   const [tryOn, setTryOn] = useState<TryOnViewState>({ phase: "intro" });
   const [allowHairColorPreview, setAllowHairColorPreview] = useState(false);
+  const [videoScan, setVideoScan] = useState<VideoScanState>();
   const tryOnRunRef = useRef(0);
   const scrollRef = useRef<ScrollView>(null);
   const locale = profile.locale;
@@ -817,7 +821,7 @@ export default function MiraApp() {
             }
             return { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" };
           }));
-          notify(tx(locale, "Фон вырезан · вещь готова", "Background removed · piece is ready"));
+          notify(tx(locale, "Фон вырезан · вещь выровнена и готова", "Background removed · piece straightened and ready"));
         }).catch(() => {
           setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageProcessingState: "CUTOUT_FAILED" } : item));
         });
@@ -850,6 +854,50 @@ export default function MiraApp() {
     if (result.canceled || !result.assets[0]) return;
     void processWardrobeAsset(result.assets[0], 0);
     notify(tx(locale, "Фото уже в шкафу · AI заканчивает обработку", "The photo is already in your closet · AI is finishing up"));
+  };
+
+  const takeWardrobeVideo = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      notify(tx(locale, "Разреши доступ к камере в настройках устройства", "Allow camera access in your device settings"));
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["videos"],
+      allowsEditing: false,
+      videoMaxDuration: 30,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      cameraType: ImagePicker.CameraType.back,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const videoAsset = result.assets[0];
+    setTab("closet");
+    setVideoScan({ phase: "extracting", completed: 0, total: 0 });
+    try {
+      const frames = await extractWardrobeVideoFrames(videoAsset);
+      setVideoScan({ phase: "adding", completed: 0, total: frames.length });
+      for (const [index, frame] of frames.entries()) {
+        const base64 = frame.imageDataUrl.split(",", 2)[1] ?? "";
+        await processWardrobeAsset({
+          uri: frame.imageDataUrl,
+          base64,
+          mimeType: "image/jpeg",
+          width: 960,
+          height: 960,
+          fileName: `video-item-${index + 1}.jpg`,
+        }, index);
+        setVideoScan({ phase: "adding", completed: index + 1, total: frames.length });
+        await delay(0);
+      }
+      notify(tx(locale, `Видео разобрано: ${frames.length} вещей добавлены отдельно`, `Video scanned: ${frames.length} pieces were added separately`));
+    } catch {
+      notify(tx(locale, "Не удалось разобрать видео. Снимай до 30 секунд и задерживайся на каждой вещи.", "Could not scan the video. Keep it under 30 seconds and pause on each piece."));
+    } finally {
+      setVideoScan(undefined);
+      if (Platform.OS !== "web" && videoAsset.uri.startsWith("file:")) {
+        await FileSystem.deleteAsync(videoAsset.uri, { idempotent: true }).catch(() => undefined);
+      }
+    }
   };
 
   const toggleReaction = (postId: string) => {
@@ -961,6 +1009,7 @@ export default function MiraApp() {
                 hasWardrobe={wardrobe.length > 0}
                 onAddPhoto={addPhoto}
                 onTakePhoto={takeWardrobePhoto}
+                onTakeVideo={takeWardrobeVideo}
                 onEnableDemo={enableDemoWardrobe}
                 weatherLocation={weatherLocation}
                 weather={weather}
@@ -1001,11 +1050,12 @@ export default function MiraApp() {
                 hasWardrobe={wardrobe.length > 0}
                 onAddPhoto={addPhoto}
                 onTakePhoto={takeWardrobePhoto}
+                onTakeVideo={takeWardrobeVideo}
                 onEnableDemo={enableDemoWardrobe}
                 onAppearance={openGuidanceSetup}
               />
             )}
-            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} demoMode={demoWardrobeEnabled} addPhoto={addPhoto} takePhoto={takeWardrobePhoto} onEnableDemo={enableDemoWardrobe} onDisableDemo={disableDemoWardrobe} onUpdate={updateWardrobeItem} onBuildThree={buildThreeLooksAround} shoppingEnabled={profile.shoppingAssistantEnabled} onPurchaseCheck={() => setOverlay("purchase-check")} />}
+            {tab === "closet" && <ClosetScreen locale={locale} wardrobe={wardrobe} demoMode={demoWardrobeEnabled} addPhoto={addPhoto} takePhoto={takeWardrobePhoto} takeVideo={takeWardrobeVideo} onEnableDemo={enableDemoWardrobe} onDisableDemo={disableDemoWardrobe} onUpdate={updateWardrobeItem} onBuildThree={buildThreeLooksAround} shoppingEnabled={profile.shoppingAssistantEnabled} onPurchaseCheck={() => setOverlay("purchase-check")} />}
             {tab === "me" && (
               <ProfileScreen
                 locale={locale}
@@ -1024,6 +1074,7 @@ export default function MiraApp() {
             )}
           </ScrollView>
           <BottomNav locale={locale} active={tab} onChange={setTab} />
+          {videoScan && <View style={styles.videoScanToast}><ActivityIndicator size="small" color={colors.paper} /><View style={{ flex: 1 }}><Text style={styles.videoScanTitle}>{videoScan.phase === "extracting" ? tx(locale, "Разбираю видео на отдельные вещи…", "Separating the video into pieces…") : tx(locale, `Добавляю вещи · ${videoScan.completed}/${videoScan.total}`, `Adding pieces · ${videoScan.completed}/${videoScan.total}`)}</Text><Text style={styles.videoScanBody}>{tx(locale, "Видео временное и удалится после обработки", "The temporary video is deleted after processing")}</Text></View></View>}
           {toast && <View style={styles.toast}><Check size={16} color={colors.paper} /><Text style={styles.toastText}>{toast}</Text></View>}
           {overlay !== "none" && (
             <View style={styles.overlay}>
@@ -1091,7 +1142,7 @@ function DestinationPicker({ locale, occasion, activityType, onOccasionChange, o
   </View>;
 }
 
-function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, occasion, activityType, onOccasionChange, onActivityTypeChange, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onTakePhoto, onEnableDemo, weatherLocation, weather, weatherLoading, weatherError, onWeather, onRefreshWeather }: {
+function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAnswer, aiLoading, setAiQuestion, askMira, onQuickAction, onChooseToday, occasion, activityType, onOccasionChange, onActivityTypeChange, onFeedback, feedback, needsGuidance, onGuidance, onCreate, onPublish, hasWardrobe, onAddPhoto, onTakePhoto, onTakeVideo, onEnableDemo, weatherLocation, weather, weatherLoading, weatherError, onWeather, onRefreshWeather }: {
   locale: Locale;
   profile: ProfileState;
   mode: string;
@@ -1117,6 +1168,7 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
   hasWardrobe: boolean;
   onAddPhoto: () => void;
   onTakePhoto: () => void;
+  onTakeVideo: () => void;
   onEnableDemo: () => void;
   weatherLocation: WeatherLocation | undefined;
   weather: WeatherSnapshot | undefined;
@@ -1150,7 +1202,7 @@ function TodayScreen({ locale, profile, mode, styleNames, look, aiQuestion, aiAn
         <View style={styles.styleDnaCopy}><Text style={styles.miniLabel}>STYLE DNA</Text><Text numberOfLines={1} style={styles.styleDnaName}>{styleNames.join(" + ")}</Text></View>
         <ChevronRight size={18} color={colors.graphite} />
       </View>
-      {!hasWardrobe && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onTakePhoto={onTakePhoto} onEnableDemo={onEnableDemo} />}
+      {!hasWardrobe && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onTakePhoto={onTakePhoto} onTakeVideo={onTakeVideo} onEnableDemo={onEnableDemo} />}
       {look && (
         <View style={styles.heroLookCard}>
           <LinearGradient colors={["#ECE8FF", "#F7E9F0", "#E7F5F5"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
@@ -1265,7 +1317,7 @@ function PostCard({ locale, post, onReact, onRemix }: { locale: Locale; post: Fe
   );
 }
 
-function CreateScreen({ locale, profile, styleNames, occasion, activityType, setOccasion, setActivityType, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onTakePhoto, onEnableDemo, onAppearance }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: Occasion; activityType: ActivityType; setOccasion: (v: Occasion) => void; setActivityType: (v: ActivityType) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onTakePhoto: () => void; onEnableDemo: () => void; onAppearance: () => void }) {
+function CreateScreen({ locale, profile, styleNames, occasion, activityType, setOccasion, setActivityType, outfits, activeLook, setActiveLook, regenerate, publish, tryOn, hasWardrobe, onAddPhoto, onTakePhoto, onTakeVideo, onEnableDemo, onAppearance }: { locale: Locale; profile: ProfileState; styleNames: string[]; occasion: Occasion; activityType: ActivityType; setOccasion: (v: Occasion) => void; setActivityType: (v: ActivityType) => void; outfits: OutfitOption[]; activeLook: number; setActiveLook: (v: number) => void; regenerate: () => void; publish: () => void; tryOn: () => void; hasWardrobe: boolean; onAddPhoto: () => void; onTakePhoto: () => void; onTakeVideo: () => void; onEnableDemo: () => void; onAppearance: () => void }) {
   const look = outfits[activeLook];
   const hairLength = HAIR_LENGTH_OPTIONS.find((option) => option.id === profile.hairProfile.length)?.label[locale];
   const hairColor = HAIR_COLOR_OPTIONS.find((option) => option.id === profile.hairProfile.color)?.label[locale];
@@ -1280,7 +1332,7 @@ function CreateScreen({ locale, profile, styleNames, occasion, activityType, set
         <View style={{ flex: 1 }}><Text style={styles.createHairTitle}>{tx(locale, "Волосы и укладка", "Hair and styling")}</Text><Text numberOfLines={2} style={styles.createHairBody}>{hairLength} · {hairColor} · {hairStyle}</Text></View>
         <View style={styles.createHairEdit}><Text style={styles.createHairEditText}>{tx(locale, "Изменить", "Edit")}</Text><ChevronRight size={15} color={colors.ultraviolet} /></View>
       </Pressable>
-      {!look && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onTakePhoto={onTakePhoto} onEnableDemo={onEnableDemo} hasSomePieces={hasWardrobe} />}
+      {!look && <WardrobeStartCard locale={locale} onAddPhoto={onAddPhoto} onTakePhoto={onTakePhoto} onTakeVideo={onTakeVideo} onEnableDemo={onEnableDemo} hasSomePieces={hasWardrobe} />}
       {look && <View style={styles.builderCanvas}><LinearGradient colors={["#EBE8FF", "#F8EAF0", "#EAF7F6"]} style={StyleSheet.absoluteFill} /><OutfitCanvas look={look} large /><TotalLookGuide locale={locale} look={look} profile={profile} referenceVariant={activeLook} /></View>}
       {look && <>
         <View style={styles.lookDots}>{outfits.map((_, index) => <Pressable key={index} onPress={() => setActiveLook(index)} style={[styles.lookDot, index === activeLook && styles.lookDotActive]} />)}</View>
@@ -1323,7 +1375,7 @@ function TryOnScreen({ locale, look, state, allowHairColorPreview, setAllowHairC
   </View>;
 }
 
-function WardrobeStartCard({ locale, onAddPhoto, onTakePhoto, onEnableDemo, hasSomePieces = false }: { locale: Locale; onAddPhoto: () => void; onTakePhoto: () => void; onEnableDemo: () => void; hasSomePieces?: boolean }) {
+function WardrobeStartCard({ locale, onAddPhoto, onTakePhoto, onTakeVideo, onEnableDemo, hasSomePieces = false }: { locale: Locale; onAddPhoto: () => void; onTakePhoto: () => void; onTakeVideo: () => void; onEnableDemo: () => void; hasSomePieces?: boolean }) {
   return <View style={styles.wardrobeStartCard}>
     <LinearGradient colors={["#F0ECFF", "#FFF4F5", "#EDF8F7"]} style={StyleSheet.absoluteFill} />
     <View style={styles.wardrobeStartIcon}><ImagePlus size={25} color={colors.ultraviolet} /></View>
@@ -1331,6 +1383,7 @@ function WardrobeStartCard({ locale, onAddPhoto, onTakePhoto, onEnableDemo, hasS
     <Text style={styles.wardrobeStartBody}>{hasSomePieces ? tx(locale, "Выбери сразу несколько фото. Для полного образа нужны хотя бы верх и низ или платье.", "Choose several photos at once. A complete look needs at least a top and bottom, or a dress.") : tx(locale, "Выбери до 12 фото сразу — AI вырежет фон, распознает каждую вещь и будет собирать образы только из твоего шкафа.", "Choose up to 12 photos at once. AI removes every background, identifies each piece, and builds looks only from your closet.")}</Text>
     <Pressable onPress={onAddPhoto} style={styles.wardrobeStartPrimary}><Camera size={18} color={colors.paper} /><Text style={styles.wardrobeStartPrimaryText}>{hasSomePieces ? tx(locale, "Добавить несколько вещей", "Add several pieces") : tx(locale, "Быстро наполнить шкаф", "Quick closet fill")}</Text></Pressable>
     <Pressable onPress={onTakePhoto} style={styles.wardrobeCameraSecondary}><Camera size={17} color={colors.ultraviolet} /><Text style={styles.wardrobeCameraSecondaryText}>{tx(locale, "Сфотографировать одну вещь", "Photograph one piece")}</Text></Pressable>
+    <Pressable onPress={onTakeVideo} style={styles.wardrobeVideoSecondary}><Video size={17} color={colors.ultraviolet} /><View style={{ flex: 1 }}><Text style={styles.wardrobeVideoSecondaryTitle}>{tx(locale, "Снять видеообзор вещей", "Record a closet video")}</Text><Text style={styles.wardrobeVideoSecondaryBody}>{tx(locale, "Показывай по одной вещи 1–2 секунды · каждая добавится отдельно", "Show one piece for 1–2 seconds · each is added separately")}</Text></View><ChevronRight size={17} color={colors.secondary} /></Pressable>
     {!hasSomePieces && <>
       <View style={styles.wardrobeStartDivider}><View style={styles.wardrobeStartLine} /><Text style={styles.wardrobeStartOr}>{tx(locale, "ИЛИ", "OR")}</Text><View style={styles.wardrobeStartLine} /></View>
       <Pressable onPress={onEnableDemo} style={styles.wardrobeStartDemo}><Sparkles size={17} color={colors.ultraviolet} /><View style={{ flex: 1 }}><Text style={styles.wardrobeStartDemoTitle}>{tx(locale, "Посмотреть, как работает приложение", "See how the app works")}</Text><Text style={styles.wardrobeStartDemoBody}>{tx(locale, "Демо-гардероб появится только после нажатия", "The demo closet appears only after you choose it")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
@@ -1338,7 +1391,7 @@ function WardrobeStartCard({ locale, onAddPhoto, onTakePhoto, onEnableDemo, hasS
   </View>;
 }
 
-function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, takePhoto, onEnableDemo, onDisableDemo, onUpdate, onBuildThree, shoppingEnabled, onPurchaseCheck }: { locale: Locale; wardrobe: WardrobeClientItem[]; demoMode: boolean; addPhoto: () => void; takePhoto: () => void; onEnableDemo: () => void; onDisableDemo: () => void; onUpdate: (localId: string, patch: Partial<WardrobeClientItem>) => void; onBuildThree: (item: WardrobeClientItem) => void; shoppingEnabled: boolean; onPurchaseCheck: () => void }) {
+function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, takePhoto, takeVideo, onEnableDemo, onDisableDemo, onUpdate, onBuildThree, shoppingEnabled, onPurchaseCheck }: { locale: Locale; wardrobe: WardrobeClientItem[]; demoMode: boolean; addPhoto: () => void; takePhoto: () => void; takeVideo: () => void; onEnableDemo: () => void; onDisableDemo: () => void; onUpdate: (localId: string, patch: Partial<WardrobeClientItem>) => void; onBuildThree: (item: WardrobeClientItem) => void; shoppingEnabled: boolean; onPurchaseCheck: () => void }) {
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string>();
   const personalItems = wardrobe.filter((item) => !isDemoWardrobeItem(item));
@@ -1347,11 +1400,12 @@ function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, takePhoto, onEnabl
   return (
     <View>
       <View style={styles.screenTitleRow}><View><Text style={styles.eyebrow}>{tx(locale, "ТВОИ РЕАЛЬНЫЕ ВЕЩИ", "YOUR REAL PIECES")}</Text><Text style={styles.screenTitle}>{tx(locale, "Шкаф", "Closet")}</Text></View><Pressable onPress={addPhoto} style={styles.addRound}><Plus size={22} color={colors.paper} /></Pressable></View>
-      {!wardrobe.length ? <WardrobeStartCard locale={locale} onAddPhoto={addPhoto} onTakePhoto={takePhoto} onEnableDemo={onEnableDemo} /> : <>
+      {!wardrobe.length ? <WardrobeStartCard locale={locale} onAddPhoto={addPhoto} onTakePhoto={takePhoto} onTakeVideo={takeVideo} onEnableDemo={onEnableDemo} /> : <>
       {demoMode && <View style={styles.demoModeBanner}><View style={styles.demoModeIcon}><Sparkles size={17} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.demoModeTitle}>{tx(locale, "Сейчас включён демо-шкаф", "Demo closet is on")}</Text><Text style={styles.demoModeBody}>{tx(locale, "Это только пример. Добавь свою вещь — демо автоматически исчезнет.", "This is only a preview. Add your own piece and the demo will disappear automatically.")}</Text></View><Pressable onPress={onDisableDemo} style={styles.demoModeExit}><Text style={styles.demoModeExitText}>{tx(locale, "Убрать", "Remove")}</Text></Pressable></View>}
       <View style={styles.closetStats}><View><Text style={styles.statValue}>{wardrobe.length}</Text><Text style={styles.statLabel}>{tx(locale, "вещей", "pieces")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{demoMode ? "DEMO" : "100%"}</Text><Text style={styles.statLabel}>{demoMode ? tx(locale, "пример", "sample") : tx(locale, "твои", "yours")}</Text></View><View style={styles.statDivider} /><View><Text style={styles.statValue}>{personalItems.length ? "AI" : "3"}</Text><Text style={styles.statLabel}>{tx(locale, "образа", "looks")}</Text></View></View>
       <Pressable onPress={addPhoto} style={styles.scanCard}><LinearGradient colors={[colors.ultraviolet, "#8B6BFF"]} style={StyleSheet.absoluteFill} /><View style={styles.scanIcon}><Camera size={24} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.scanTitle}>{tx(locale, "Быстро наполнить шкаф", "Quick closet fill")}</Text><Text style={styles.scanBody}>{tx(locale, "Выбери до 12 фото сразу · AI всё вырежет и разложит", "Choose up to 12 photos · AI cuts out and sorts every piece")}</Text></View><ChevronRight size={20} color={colors.paper} /></Pressable>
       <Pressable onPress={takePhoto} style={styles.closetCameraCard}><View style={styles.closetCameraIcon}><Camera size={18} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.closetCameraTitle}>{tx(locale, "Снять одну вещь камерой", "Photograph one piece")}</Text><Text style={styles.closetCameraBody}>{tx(locale, "Она появится в шкафу сразу после «Использовать фото»", "It appears immediately after “Use Photo”")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
+      <Pressable onPress={takeVideo} style={styles.closetVideoCard}><View style={styles.closetVideoIcon}><Video size={18} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.closetCameraTitle}>{tx(locale, "Видеообзор · несколько вещей", "Video scan · several pieces")}</Text><Text style={styles.closetCameraBody}>{tx(locale, "Показывай вещи по одной — MIRA создаст отдельную карточку для каждой", "Show pieces one by one and MIRA creates a separate card for each")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>
       {shoppingEnabled && <Pressable onPress={onPurchaseCheck} style={styles.purchaseCheckCard}><View style={styles.purchaseCheckIcon}><Search size={18} color={colors.ultraviolet} /></View><View style={{ flex: 1 }}><Text style={styles.purchaseCheckTitle}>{tx(locale, "Стоит ли покупать?", "Should I buy it?")}</Text><Text style={styles.purchaseCheckBody}>{tx(locale, "Сфотографируй вещь в магазине — MIRA найдёт повторы и новые сочетания.", "Photograph an item in store; MIRA finds duplicates and new combinations.")}</Text></View><ChevronRight size={18} color={colors.secondary} /></Pressable>}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>{[["all", tx(locale, "Все", "All")], ["top", tx(locale, "Верх", "Tops")], ["bottom", tx(locale, "Низ", "Bottoms")], ["footwear", tx(locale, "Обувь", "Shoes")], ["bag", tx(locale, "Сумки", "Bags")], ["jewelry", tx(locale, "Украшения", "Jewelry")]].map(([id, label]) => <Pressable key={id} onPress={() => setFilter(id!)} style={[styles.filterChip, filter === id && styles.filterChipActive]}><Text style={[styles.filterText, filter === id && styles.filterTextActive]}>{label}</Text></Pressable>)}</ScrollView>
       {selected && <View style={styles.wardrobeStatusPanel}>
@@ -1930,6 +1984,9 @@ const styles = StyleSheet.create({
   wardrobeStartPrimaryText: { fontFamily: typography.bodySemibold, fontSize: 11, color: colors.paper },
   wardrobeCameraSecondary: { minHeight: 45, borderRadius: 16, backgroundColor: "#FFFFFFB8", borderWidth: 1, borderColor: "#D9D0F4", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 9 },
   wardrobeCameraSecondaryText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.ultraviolet },
+  wardrobeVideoSecondary: { minHeight: 62, borderRadius: 17, backgroundColor: "#FFFFFFB8", borderWidth: 1, borderColor: "#D9D0F4", flexDirection: "row", alignItems: "center", gap: 9, marginTop: 9, paddingHorizontal: 12 },
+  wardrobeVideoSecondaryTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
+  wardrobeVideoSecondaryBody: { fontFamily: typography.body, fontSize: 8.2, lineHeight: 12.2, color: colors.secondary, marginTop: 3 },
   wardrobeStartDivider: { flexDirection: "row", alignItems: "center", gap: 9, marginVertical: 13 },
   wardrobeStartLine: { flex: 1, height: 1, backgroundColor: "#DCD6E5" },
   wardrobeStartOr: { fontFamily: typography.bodySemibold, fontSize: 7.5, color: colors.secondary, letterSpacing: 1.1 },
@@ -1954,6 +2011,8 @@ const styles = StyleSheet.create({
   closetCameraIcon: { width: 39, height: 39, borderRadius: 14, backgroundColor: colors.violetMist, alignItems: "center", justifyContent: "center" },
   closetCameraTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.graphite },
   closetCameraBody: { fontFamily: typography.body, fontSize: 8.3, lineHeight: 12, color: colors.secondary, marginTop: 3 },
+  closetVideoCard: { minHeight: 70, borderRadius: 19, backgroundColor: "#F2EEFF", borderWidth: 1, borderColor: "#D9D0F4", flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, marginTop: 9 },
+  closetVideoIcon: { width: 39, height: 39, borderRadius: 14, backgroundColor: colors.paper, alignItems: "center", justifyContent: "center" },
   filterRail: { gap: 7, paddingVertical: 15 },
   filterChip: { borderRadius: 14, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.paper },
   filterChipActive: { backgroundColor: colors.graphite, borderColor: colors.graphite },
@@ -2013,6 +2072,9 @@ const styles = StyleSheet.create({
   createNavIcon: { width: 43, height: 43, borderRadius: 17, backgroundColor: colors.ultraviolet, alignItems: "center", justifyContent: "center" },
   toast: { position: "absolute", left: 28, right: 28, bottom: 89, minHeight: 46, borderRadius: 16, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 13 },
   toastText: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.paper, textAlign: "center" },
+  videoScanToast: { position: "absolute", left: 20, right: 20, bottom: 89, zIndex: 12, minHeight: 64, borderRadius: 19, backgroundColor: colors.graphite, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 15, paddingVertical: 11 },
+  videoScanTitle: { fontFamily: typography.bodySemibold, fontSize: 10.5, color: colors.paper },
+  videoScanBody: { fontFamily: typography.body, fontSize: 8.2, lineHeight: 12, color: "#CFC8D8", marginTop: 3 },
   overlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: colors.porcelain },
   fullScreen: { flex: 1, backgroundColor: colors.porcelain },
   weatherScreenContent: { paddingHorizontal: 18, paddingBottom: 40 },
