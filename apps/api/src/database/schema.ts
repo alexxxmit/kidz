@@ -232,3 +232,25 @@ export const tryOnJobs = pgTable(
     index("try_on_jobs_user_created_idx").on(table.userId, table.createdAt),
   ],
 );
+
+export const garmentPolishJobs = pgTable(
+  "garment_polish_jobs",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    falRequestId: varchar("fal_request_id", { length: 128 }).notNull(),
+    modelId: varchar("model_id", { length: 160 }).notNull(),
+    falStatusUrl: varchar("fal_status_url", { length: 2048 }).notNull(),
+    falResponseUrl: varchar("fal_response_url", { length: 2048 }).notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("QUEUED"),
+    resultUrl: varchar("result_url", { length: 2048 }),
+    errorCode: varchar("error_code", { length: 80 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("garment_polish_jobs_fal_request_idx").on(table.falRequestId),
+    index("garment_polish_jobs_user_created_idx").on(table.userId, table.createdAt),
+  ],
+);

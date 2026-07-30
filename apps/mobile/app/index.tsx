@@ -73,14 +73,17 @@ import {
   analyzeWardrobePhoto,
   acceptFollowRequest,
   createGuestSession,
+  createGarmentPolish,
   createSocialConversation,
   createVirtualTryOn,
   cutoutWardrobePhoto,
   deleteAccount,
+  dedupeWardrobeImages,
   extractWardrobeVideoFrames,
   followSocialAccount,
   loadConversations,
   loadFollowRequests,
+  loadGarmentPolish,
   loadMessages,
   loadSocialFeed,
   loadVirtualTryOn,
@@ -143,6 +146,7 @@ const LOOK_FEEDBACK_KEY = "mira.look-feedback.v1";
 const STYLE_DNA_HISTORY_KEY = "mira.style-dna-history.v1";
 const QUESTS_KEY = "mira.style-quests.v1";
 const TODAY_PLAN_KEY = "mira.today-plan.v1";
+const WARDROBE_DEDUPE_KEY = "mira.wardrobe-dedupe.v2";
 const WARDROBE_CATALOG_VERSION = "stockholm-reference-v3";
 const defaultProfile: ProfileState = { locale: "ru", age: 15, nickname: "mira", handle: "mira.style", styles: ["stockholm"], genderPresentation: "FEMININE", hairProfile: DEFAULT_HAIR_PROFILE, schoolDressCode: "FREE_STYLE", schoolUniformDescription: "", guidanceComplete: false, shoppingAssistantEnabled: false };
 
@@ -214,6 +218,15 @@ const prepareTryOnImage = async (uri: string, kind: "person" | "garment") => {
   );
   if (!result.base64) throw new Error("IMAGE_PREPARATION_FAILED");
   return `data:image/${kind === "person" ? "jpeg" : "webp"};base64,${result.base64}`;
+};
+const prepareDedupeImage = async (uri: string) => {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 280 } }],
+    { base64: true, compress: 0.58, format: ImageManipulator.SaveFormat.WEBP },
+  );
+  if (!result.base64) throw new Error("DEDUPE_IMAGE_PREPARATION_FAILED");
+  return `data:image/webp;base64,${result.base64}`;
 };
 const imageDimensions = async (uri: string) => new Promise<{ width: number; height: number }>((resolve, reject) => {
   Image.getSize(uri, (width, height) => resolve({ width, height }), reject);
@@ -295,6 +308,7 @@ export default function MiraApp() {
   const [allowHairColorPreview, setAllowHairColorPreview] = useState(false);
   const [videoScan, setVideoScan] = useState<VideoScanState>();
   const tryOnRunRef = useRef(0);
+  const wardrobeDedupeRunRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const locale = profile.locale;
   const mode = ageMode(profile.age);
@@ -331,6 +345,38 @@ export default function MiraApp() {
     setIncomingRequests((current) => current.filter((request) => request.id !== accountId));
     notify(tx(locale, "Контакт подтверждён", "Connection approved"));
   }, [locale, profile.age, token]);
+
+  const polishExistingWardrobeItem = useCallback(async (item: WardrobeClientItem) => {
+    const source = item.cutoutUri ?? item.imageUri;
+    if (!token || !source || item.imageProcessingState === "POLISH_READY" || item.imageProcessingState === "PENDING_POLISH") return;
+    setWardrobe((items) => items.map((current) => current.localId === item.localId ? { ...current, imageProcessingState: "PENDING_POLISH" } : current));
+    try {
+      const reference = await prepareTryOnImage(source, "garment");
+      let job = await createGarmentPolish(token, {
+        imageDataUrl: reference,
+        name: item.name,
+        category: item.category,
+        colors: item.colors,
+      });
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        await delay(2_000);
+        job = await loadGarmentPolish(token, job.id);
+        if (job.status === "COMPLETED" && job.resultImageUrl) {
+          const generatedReference = await prepareTryOnImage(job.resultImageUrl, "garment");
+          const generatedBase64 = generatedReference.split(",", 2)[1];
+          if (!generatedBase64) throw new Error("POLISHED_IMAGE_BASE64_MISSING");
+          const cutoutUri = await cutoutWardrobePhoto(generatedBase64);
+          const stored = await persistWardrobeImage(cutoutUri, item.localId, "cutout");
+          setWardrobe((items) => items.map((current) => current.localId === item.localId ? { ...current, cutoutUri: stored, imageProcessingState: "POLISH_READY" } : current));
+          return;
+        }
+        if (job.status === "FAILED") throw new Error(job.errorCode ?? "GARMENT_POLISH_FAILED");
+      }
+      throw new Error("GARMENT_POLISH_TIMEOUT");
+    } catch {
+      setWardrobe((items) => items.map((current) => current.localId === item.localId ? { ...current, imageProcessingState: "POLISH_FAILED" } : current));
+    }
+  }, [token]);
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(PROFILE_KEY), storage.getToken(), AsyncStorage.getItem(WARDROBE_KEY), AsyncStorage.getItem(WARDROBE_CATALOG_KEY), AsyncStorage.getItem(DEMO_WARDROBE_KEY), AsyncStorage.getItem(LOOK_FEEDBACK_KEY), AsyncStorage.getItem(WEATHER_LOCATION_KEY), AsyncStorage.getItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.getItem(STYLE_DNA_HISTORY_KEY), AsyncStorage.getItem(TODAY_PLAN_KEY)]).then(([saved, savedToken, savedWardrobe, savedCatalogVersion, savedDemoWardrobe, savedFeedback, savedWeatherLocation, savedWeatherSnapshot, savedDna, savedPlan]) => {
@@ -393,6 +439,37 @@ export default function MiraApp() {
   useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(WARDROBE_KEY, JSON.stringify(wardrobe));
   }, [hydrated, wardrobe]);
+
+  useEffect(() => {
+    if (!hydrated || wardrobeDedupeRunRef.current) return;
+    const candidates = wardrobe
+      .filter((item) => !isDemoWardrobeItem(item) && Boolean(item.cutoutUri ?? item.imageUri))
+      .slice(0, 24);
+    if (candidates.length < 2) return;
+    wardrobeDedupeRunRef.current = true;
+    void AsyncStorage.getItem(WARDROBE_DEDUPE_KEY).then(async (completed) => {
+      if (completed === "true") return;
+      const prepared = (await Promise.all(candidates.map(async (item) => {
+        const uri = item.cutoutUri ?? item.imageUri;
+        if (!uri) return undefined;
+        return prepareDedupeImage(uri).then((image) => ({ localId: item.localId, image })).catch(() => undefined);
+      }))).filter((item): item is { localId: string; image: string } => Boolean(item));
+      if (prepared.length < 2) return;
+      const result = await dedupeWardrobeImages(prepared.map((item) => item.image));
+      const duplicateIds = new Set(result.duplicate_groups.flatMap((group) => group.duplicate_indices.map((index) => prepared[index]?.localId).filter((id): id is string => Boolean(id))));
+      if (duplicateIds.size) {
+        setWardrobe((items) => items.filter((item) => !duplicateIds.has(item.localId)));
+        notify(tx(locale, `MIRA убрала повторяющиеся вещи: ${duplicateIds.size}`, `MIRA removed duplicate pieces: ${duplicateIds.size}`));
+        result.duplicate_groups.forEach((group) => {
+          const kept = candidates.find((item) => item.localId === prepared[group.kept_index]?.localId);
+          if (kept) void polishExistingWardrobeItem(kept);
+        });
+      }
+      await AsyncStorage.setItem(WARDROBE_DEDUPE_KEY, "true");
+    }).catch(() => {
+      wardrobeDedupeRunRef.current = false;
+    });
+  }, [hydrated, locale, polishExistingWardrobeItem, wardrobe]);
 
   useEffect(() => {
     if (hydrated) void AsyncStorage.setItem(DEMO_WARDROBE_KEY, String(demoWardrobeEnabled));
@@ -807,31 +884,66 @@ export default function MiraApp() {
       setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageUri: storedSource } : item));
       const imageDataUrl = pickerDataUrl ?? (durableSource.startsWith("data:image/") ? durableSource : await prepareTryOnImage(asset.uri, "garment"));
       const imageBase64 = imageDataUrl.split(",", 2)[1];
-      if (token) {
-        void analyzeWardrobePhoto(token, { ageYears: profile.age, locale, imageDataUrl, selectedStyleIds: profile.styles }).then((analysis) => {
+      const analysisPromise: Promise<WardrobeVisionResult | undefined> = token
+        ? analyzeWardrobePhoto(token, { ageYears: profile.age, locale, imageDataUrl, selectedStyleIds: profile.styles }).catch(() => undefined)
+        : Promise.resolve(undefined);
+      void analysisPromise.then((analysis) => {
+        if (analysis) {
           setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: analysis.name, category: analysis.category, slot: analysis.slot, colors: analysis.colors, warmth: analysis.warmth, styleIds: analysis.styleIds.length ? analysis.styleIds : profile.styles } : item));
           notify(analysis.provider === "openai" ? tx(locale, `Распознано: ${analysis.name}`, `Identified: ${analysis.name}`) : tx(locale, "Фото сохранено · тип можно уточнить позже", "Photo saved · you can refine the type later"));
-        }).catch(() => setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Новая вещь · проверь тип", "New piece · check type") } : item)));
-      } else {
-        setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Новая вещь · проверь тип", "New piece · check type") } : item));
-      }
+        } else {
+          setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Новая вещь · проверь тип", "New piece · check type") } : item));
+        }
+      });
       if (!imageBase64) throw new Error("IMAGE_BASE64_MISSING");
-      void cutoutWardrobePhoto(imageBase64)
-        .then((cutoutUri) => Platform.OS === "web" ? prepareTryOnImage(cutoutUri, "garment").catch(() => cutoutUri) : cutoutUri)
-        .then((cutoutUri) => persistWardrobeImage(cutoutUri, localId, "cutout"))
-        .then((cutoutUri) => {
+      void (async () => {
+        try {
+          const rawCutoutUri = await cutoutWardrobePhoto(imageBase64);
+          const polishReference = await prepareTryOnImage(rawCutoutUri, "garment").catch(() => rawCutoutUri);
+          const initialCutoutUri = await persistWardrobeImage(polishReference, localId, "cutout");
           setWardrobe((items) => items.map((item) => {
             if (item.localId !== localId) return item;
             if (Platform.OS === "web") {
               const { imageUri: _source, ...durableItem } = item;
-              return { ...durableItem, cutoutUri, imageProcessingState: "CUTOUT_READY" };
+              return { ...durableItem, cutoutUri: initialCutoutUri, imageProcessingState: token ? "PENDING_POLISH" : "CUTOUT_READY" };
             }
-            return { ...item, cutoutUri, imageProcessingState: "CUTOUT_READY" };
+            return { ...item, cutoutUri: initialCutoutUri, imageProcessingState: token ? "PENDING_POLISH" : "CUTOUT_READY" };
           }));
-          notify(tx(locale, "Фон вырезан · вещь выровнена и готова", "Background removed · piece straightened and ready"));
-        }).catch(() => {
+          if (!token) {
+            notify(tx(locale, "Фон вырезан · вещь выровнена и готова", "Background removed · piece straightened and ready"));
+            return;
+          }
+          const analysis = await analysisPromise;
+          let polishJob = await createGarmentPolish(token, {
+            imageDataUrl: polishReference,
+            name: analysis?.name ?? draftItem.name,
+            category: analysis?.category ?? draftItem.category,
+            colors: analysis?.colors ?? draftItem.colors,
+          });
+          for (let attempt = 0; attempt < 45; attempt += 1) {
+            await delay(2_000);
+            polishJob = await loadGarmentPolish(token, polishJob.id);
+            if (polishJob.status === "COMPLETED" && polishJob.resultImageUrl) {
+              const generatedReference = await prepareTryOnImage(polishJob.resultImageUrl, "garment");
+              const generatedBase64 = generatedReference.split(",", 2)[1];
+              if (!generatedBase64) throw new Error("POLISHED_IMAGE_BASE64_MISSING");
+              const polishedCutout = await cutoutWardrobePhoto(generatedBase64);
+              const storedPolishedCutout = await persistWardrobeImage(polishedCutout, localId, "cutout");
+              setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, cutoutUri: storedPolishedCutout, imageProcessingState: "POLISH_READY" } : item));
+              notify(tx(locale, "AI разгладила и аккуратно восстановила вещь", "AI cleaned and neatly restored the piece"));
+              return;
+            }
+            if (polishJob.status === "FAILED") throw new Error(polishJob.errorCode ?? "GARMENT_POLISH_FAILED");
+          }
+          throw new Error("GARMENT_POLISH_TIMEOUT");
+        } catch {
+          setWardrobe((items) => items.map((item) => item.localId === localId
+            ? { ...item, imageProcessingState: item.cutoutUri ? "POLISH_FAILED" : "CUTOUT_FAILED" }
+            : item));
+        }
+      })().catch(() => {
           setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, imageProcessingState: "CUTOUT_FAILED" } : item));
-        });
+      });
     } catch {
       setWardrobe((items) => items.map((item) => item.localId === localId ? { ...item, name: tx(locale, "Фото добавлено · обработаем позже", "Photo added · processing can retry later"), imageProcessingState: "CUTOUT_FAILED" } : item));
     }
@@ -959,7 +1071,7 @@ export default function MiraApp() {
 
   const removeAccount = async () => {
     if (token) await deleteAccount(token).catch(() => undefined);
-    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(WEATHER_LOCATION_KEY), AsyncStorage.removeItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), AsyncStorage.removeItem(STYLE_DNA_HISTORY_KEY), AsyncStorage.removeItem(QUESTS_KEY), storage.deleteToken()]);
+    await Promise.all([AsyncStorage.removeItem(PROFILE_KEY), AsyncStorage.removeItem(WARDROBE_KEY), AsyncStorage.removeItem(WARDROBE_CATALOG_KEY), AsyncStorage.removeItem(DEMO_WARDROBE_KEY), AsyncStorage.removeItem(WEATHER_LOCATION_KEY), AsyncStorage.removeItem(WEATHER_SNAPSHOT_KEY), AsyncStorage.removeItem(LOOK_FEEDBACK_KEY), AsyncStorage.removeItem(STYLE_DNA_HISTORY_KEY), AsyncStorage.removeItem(QUESTS_KEY), AsyncStorage.removeItem(WARDROBE_DEDUPE_KEY), storage.deleteToken()]);
     if (Platform.OS !== "web" && wardrobeDirectory) await FileSystem.deleteAsync(wardrobeDirectory, { idempotent: true }).catch(() => undefined);
     setToken(undefined);
     setProfile(defaultProfile);
@@ -1424,7 +1536,7 @@ function ClosetScreen({ locale, wardrobe, demoMode, addPhoto, takePhoto, takeVid
           <Pressable onPress={() => onUpdate(selected.localId, { usageTag: selected.usageTag === "RARE" ? undefined : "RARE" })} style={[styles.wardrobeStatusChip, selected.usageTag === "RARE" && styles.wardrobeStatusChipActive]}><RefreshCw size={14} color={selected.usageTag === "RARE" ? colors.paper : colors.graphite} /><Text style={[styles.wardrobeStatusChipText, selected.usageTag === "RARE" && styles.wardrobeStatusChipTextActive]}>{tx(locale, "Редко ношу", "Rarely worn")}</Text></Pressable>
         </View>
       </View>}
-      <View style={styles.closetGrid}>{visible.map((item) => <Pressable key={item.localId} onPress={() => setSelectedId((current) => current === item.localId ? undefined : item.localId)} style={[styles.closetItem, selectedId === item.localId && styles.closetItemSelected]}><View style={styles.closetArt}>{item.imageUri || item.cutoutUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <GarmentIllustration item={item} height={104} />}{item.imageProcessingState === "PENDING_CUTOUT" && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>AI</Text></View>}{item.favorite && <View style={styles.favoriteBadge}><Heart size={11} color={colors.coral} fill={colors.coral} /></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={[styles.closetMeta, item.careState === "LAUNDRY" && { color: colors.danger }]}>{item.careState === "LAUNDRY" ? tx(locale, "в стирке", "laundry") : item.usageTag === "RARE" ? tx(locale, "редко ношу", "rarely worn") : item.favorite ? tx(locale, "любимая", "favorite") : tx(locale, "готово", "ready")}</Text></Pressable>)}</View>
+      <View style={styles.closetGrid}>{visible.map((item) => <Pressable key={item.localId} onPress={() => setSelectedId((current) => current === item.localId ? undefined : item.localId)} style={[styles.closetItem, selectedId === item.localId && styles.closetItemSelected]}><View style={styles.closetArt}>{item.imageUri || item.cutoutUri ? <Image source={{ uri: item.cutoutUri ?? item.imageUri }} style={styles.closetImage} /> : <GarmentIllustration item={item} height={104} />}{["PENDING_CUTOUT", "PENDING_POLISH"].includes(item.imageProcessingState ?? "") && <View style={styles.processingBadge}><Sparkles size={10} color={colors.ultraviolet} /><Text style={styles.processingText}>{item.imageProcessingState === "PENDING_POLISH" ? "POLISH" : "AI"}</Text></View>}{item.favorite && <View style={styles.favoriteBadge}><Heart size={11} color={colors.coral} fill={colors.coral} /></View>}</View><Text numberOfLines={2} style={styles.closetName}>{item.name}</Text><Text style={[styles.closetMeta, item.careState === "LAUNDRY" && { color: colors.danger }]}>{item.careState === "LAUNDRY" ? tx(locale, "в стирке", "laundry") : item.imageProcessingState === "PENDING_POLISH" ? tx(locale, "AI разглаживает", "AI is polishing") : item.imageProcessingState === "POLISH_READY" ? tx(locale, "AI-восстановлено", "AI restored") : item.usageTag === "RARE" ? tx(locale, "редко ношу", "rarely worn") : item.favorite ? tx(locale, "любимая", "favorite") : tx(locale, "готово", "ready")}</Text></Pressable>)}</View>
       </>}
     </View>
   );

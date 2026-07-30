@@ -146,7 +146,7 @@ export const WardrobeItemInputSchema = z.object({
   imageUri: z.string().optional(),
   cutoutUri: z.string().optional(),
   imageProcessingState: z
-    .enum(["NONE", "PENDING_CUTOUT", "CUTOUT_READY", "CUTOUT_FAILED"])
+    .enum(["NONE", "PENDING_CUTOUT", "CUTOUT_READY", "CUTOUT_FAILED", "PENDING_POLISH", "POLISH_READY", "POLISH_FAILED"])
     .optional(),
 });
 export type WardrobeItemInput = z.infer<typeof WardrobeItemInputSchema>;
@@ -387,6 +387,23 @@ const TryOnImageDataUrlSchema = z
   .string()
   .startsWith("data:image/")
   .max(5_000_000);
+
+export const GarmentPolishInputSchema = z.object({
+  imageDataUrl: TryOnImageDataUrlSchema,
+  name: z.string().trim().min(1).max(80),
+  category: GarmentCategorySchema,
+  colors: z.array(z.string().regex(/^#[0-9A-F]{6}$/i)).min(1).max(4),
+});
+export type GarmentPolishInput = z.infer<typeof GarmentPolishInputSchema>;
+
+export type GarmentPolishJob = {
+  id: string;
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
+  provider: "fal";
+  resultImageUrl?: string;
+  errorCode?: string;
+  expiresAt: string;
+};
 
 export const TryOnGarmentReferenceSchema = z.object({
   name: z.string().trim().min(1).max(80),

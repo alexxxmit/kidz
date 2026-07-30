@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageOps, ImageStat
+from PIL import Image
 from pydantic import BaseModel, Field
 from rembg import new_session, remove
 
@@ -76,6 +76,21 @@ class VideoFramesResponse(BaseModel):
     sampled_frames: int
 
 
+class DedupeImagesRequest(BaseModel):
+    images: list[str] = Field(min_length=2, max_length=24)
+
+
+class DuplicateGroup(BaseModel):
+    kept_index: int
+    duplicate_indices: list[int]
+
+
+class DedupeImagesResponse(BaseModel):
+    status: Literal["ready"] = "ready"
+    unique_indices: list[int]
+    duplicate_groups: list[DuplicateGroup]
+
+
 app = FastAPI(title="Kidz Vision Worker", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -134,29 +149,79 @@ def normalize_flat_lay(image: Image.Image) -> tuple[Image.Image, float]:
     return alpha_crop_and_pad(image), round(delta, 2)
 
 
-def perceptual_signature(image: Image.Image) -> tuple[int, tuple[float, float, float]]:
-    fitted = ImageOps.fit(image.convert("RGB"), (48, 48), method=Image.Resampling.LANCZOS)
-    grayscale = fitted.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+def normalized_foreground(image: Image.Image, size: int = 72) -> Image.Image:
+    rgba = image.convert("RGBA")
+    alpha_box = rgba.getchannel("A").getbbox()
+    if alpha_box:
+        rgba = rgba.crop(alpha_box)
+    rgba.thumbnail((size - 8, size - 8), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.alpha_composite(rgba, ((size - rgba.width) // 2, (size - rgba.height) // 2))
+    return canvas
+
+
+def foreground_signature(image: Image.Image) -> dict[str, object]:
+    fitted = normalized_foreground(image)
+    alpha = np.asarray(fitted.getchannel("A"))
+    mask = alpha > 40
+    rgb = np.asarray(fitted.convert("RGB"))
+    pixels = rgb[mask]
+    if len(pixels) < 80:
+        pixels = rgb.reshape(-1, 3)
+    histograms = []
+    for channel in range(3):
+        histogram, _ = np.histogram(pixels[:, channel], bins=8, range=(0, 256))
+        histogram = histogram.astype(float)
+        histograms.append(histogram / max(histogram.sum(), 1))
+    composite = Image.new("RGB", fitted.size, (245, 245, 245))
+    composite.paste(fitted.convert("RGB"), mask=fitted.getchannel("A"))
+    grayscale = composite.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
     pixels = np.asarray(grayscale)
     bits = pixels[:, 1:] > pixels[:, :-1]
     hash_value = 0
     for bit in bits.flatten():
         hash_value = (hash_value << 1) | int(bit)
-    mean = ImageStat.Stat(fitted).mean
-    return hash_value, (mean[0], mean[1], mean[2])
+    return {
+        "mask": mask,
+        "histogram": np.concatenate(histograms),
+        "hash": hash_value,
+    }
 
 
 def is_duplicate(
-    signature: tuple[int, tuple[float, float, float]],
-    existing: list[tuple[int, tuple[float, float, float]]],
+    signature: dict[str, object],
+    existing: list[dict[str, object]],
 ) -> bool:
-    value, color = signature
-    for other_value, other_color in existing:
-        hash_distance = (value ^ other_value).bit_count()
-        color_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(color, other_color)))
-        if hash_distance <= 9 and color_distance <= 34:
+    mask = signature["mask"]
+    histogram = signature["histogram"]
+    hash_value = int(signature["hash"])
+    for other in existing:
+        other_mask = other["mask"]
+        intersection = np.logical_and(mask, other_mask).sum()
+        union = max(np.logical_or(mask, other_mask).sum(), 1)
+        shape_iou = float(intersection / union)
+        color_similarity = float(np.minimum(histogram, other["histogram"]).sum() / 3)
+        hash_distance = (hash_value ^ int(other["hash"])).bit_count()
+        if color_similarity >= 0.78 and (shape_iou >= 0.63 or hash_distance <= 13):
             return True
     return False
+
+
+def segmented_foreground(source: bytes) -> Image.Image:
+    result = remove(source, session=cutout_session(), post_process_mask=True)
+    return Image.open(BytesIO(result)).convert("RGBA")
+
+
+def decoded_image(value: str) -> Image.Image:
+    encoded = value.split(",", 1)[-1]
+    source = base64.b64decode(encoded, validate=True)
+    if len(source) > 4 * 1024 * 1024:
+        raise ValueError("Image exceeds 4 MB")
+    image = Image.open(BytesIO(source)).convert("RGBA")
+    alpha = np.asarray(image.getchannel("A"))
+    if alpha.min() > 245:
+        return segmented_foreground(source)
+    return image
 
 
 @app.get("/health")
@@ -221,6 +286,32 @@ def cutout_image(request: CutoutImageRequest):
     )
 
 
+@app.post("/v1/dedupe-images", response_model=DedupeImagesResponse)
+def dedupe_images(request: DedupeImagesRequest):
+    signatures: list[dict[str, object]] = []
+    unique_indices: list[int] = []
+    duplicate_groups: list[DuplicateGroup] = []
+    for index, value in enumerate(request.images):
+        try:
+            signature = foreground_signature(decoded_image(value))
+        except Exception as error:
+            raise HTTPException(status_code=422, detail=f"Image {index + 1} could not be read") from error
+        matched = next(
+            (position for position, existing in enumerate(signatures) if is_duplicate(signature, [existing])),
+            None,
+        )
+        if matched is None:
+            signatures.append(signature)
+            unique_indices.append(index)
+            duplicate_groups.append(DuplicateGroup(kept_index=index, duplicate_indices=[]))
+        else:
+            duplicate_groups[matched].duplicate_indices.append(index)
+    return DedupeImagesResponse(
+        unique_indices=unique_indices,
+        duplicate_groups=[group for group in duplicate_groups if group.duplicate_indices],
+    )
+
+
 @app.post("/v1/video-frames", response_model=VideoFramesResponse)
 async def video_frames(file: UploadFile = File(...)):
     content_type = (file.content_type or "").lower()
@@ -269,11 +360,15 @@ async def video_frames(file: UploadFile = File(...)):
             raise HTTPException(status_code=422, detail="Video frames could not be extracted") from None
 
         frame_paths = sorted(Path(directory).glob("frame-*.jpg"))
-        signatures: list[tuple[int, tuple[float, float, float]]] = []
+        signatures: list[dict[str, object]] = []
         selected: list[VideoFrame] = []
         for index, frame_path in enumerate(frame_paths):
             image = Image.open(frame_path).convert("RGB")
-            signature = perceptual_signature(image)
+            try:
+                foreground = segmented_foreground(frame_path.read_bytes())
+                signature = foreground_signature(foreground)
+            except Exception:
+                continue
             if is_duplicate(signature, signatures):
                 continue
             signatures.append(signature)

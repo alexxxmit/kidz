@@ -31,7 +31,7 @@ const safeModelId = () => {
   return /^[a-z0-9._-]+\/[a-z0-9._/-]+$/i.test(configured) ? configured : DEFAULT_MODEL;
 };
 
-const falHeaders = (key: string, includeJson = false): Record<string, string> => ({
+export const falHeaders = (key: string, includeJson = false): Record<string, string> => ({
   authorization: `Key ${key}`,
   ...(includeJson ? { "content-type": "application/json" } : {}),
   "x-fal-store-io": "0",

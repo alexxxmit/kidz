@@ -3,6 +3,8 @@ import type {
   AiStylistInput,
   AiStylistResponse,
   DirectMessage,
+  GarmentPolishInput,
+  GarmentPolishJob,
   GuestSession,
   GuestSessionInput,
   LookPost,
@@ -140,8 +142,27 @@ export const extractWardrobeVideoFrames = async (asset: WardrobeVideoAsset): Pro
   }));
 };
 
+export const dedupeWardrobeImages = async (images: string[]) => {
+  const response = await fetch(`${VISION_URL}/v1/dedupe-images`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ images }),
+  });
+  if (!response.ok) throw new Error(`Vision dedupe ${response.status}`);
+  return response.json() as Promise<{
+    unique_indices: number[];
+    duplicate_groups: Array<{ kept_index: number; duplicate_indices: number[] }>;
+  }>;
+};
+
 export const analyzeWardrobePhoto = (accessToken: string, input: WardrobeVisionInput) =>
   request<WardrobeVisionResult>("/v1/ai/wardrobe-vision", { method: "POST", body: JSON.stringify(input) }, accessToken);
+
+export const createGarmentPolish = (accessToken: string, input: GarmentPolishInput) =>
+  request<GarmentPolishJob>("/v1/ai/garment-polish", { method: "POST", body: JSON.stringify(input) }, accessToken);
+
+export const loadGarmentPolish = (accessToken: string, jobId: string) =>
+  request<GarmentPolishJob>(`/v1/ai/garment-polish/${jobId}`, undefined, accessToken);
 
 export const createVirtualTryOn = (accessToken: string, input: TryOnSubmitInput) =>
   request<TryOnJob>("/v1/ai/try-on", { method: "POST", body: JSON.stringify(input) }, accessToken);
